@@ -1,36 +1,11 @@
 package net.tixxit.gulon
 
+import scala.concurrent.ExecutionContext
 import scala.util.Random
 
-final case class Vectors(matrix: Matrix, from: Int, until: Int) {
-  def data: Array[Array[Float]] = matrix.data
-  def dimension: Int = until - from
-  def size: Int = matrix.rows
-}
-
-object Vectors {
-  def apply(matrix: Matrix): Vectors = Vectors(matrix, 0, matrix.cols)
-
-  def subvectors(matrix: Matrix, numSubvectors: Int): Seq[Vectors] =
-    new Seq[Vectors] {
-      def length: Int = (matrix.cols + numSubvectors - 1) / numSubvectors
-
-      def iterator: Iterator[Vectors] =
-        Iterator.tabulate(length)(apply(_))
-
-      def apply(i: Int): Vectors = {
-        val short = (length * numSubvectors) - matrix.cols
-        val full = numSubvectors - short
-        if (i < full) {
-          val from = i * length
-          Vectors(matrix, from, from + length)
-        } else {
-          val from = full * length + (i - full) * (length - 1)
-          Vectors(matrix, from, from + length - 1)
-        }
-      }
-    }
-}
+import cats.Monad
+import cats.effect.IO
+import cats.implicits._
 
 final class KMeans(
   val dimension: Int,
@@ -71,16 +46,59 @@ final class KMeans(
 
   def iterate(vecs: Vectors, iters: Int): KMeans = {
     val assignments = new Array[Int](vecs.size)
-    (0 until iters).foldLeft(this) { (kmeans, i) =>
-      kmeans.assign(vecs, assignments)
+    (0 until iters).foldLeft(this) { (prev, i) =>
+      prev.assign(vecs, assignments)
       KMeans.fromAssignment(centroids.length, dimension, vecs, assignments)
     }
   }
 }
 
 object KMeans {
-  def compute(k: Int, vecs: Vectors, n: Int, seed: Int = 0): Matrix =
-    Matrix(k, vecs.dimension, KMeans.init(k, vecs, seed).iterate(vecs, n).centroids)
+  case class ProgressReport(numIterations: Int,
+                            maxIterations: Int,
+                            stepSize: SummaryStats)
+
+  object ProgressReport {
+    def init(maxIterations: Int): ProgressReport =
+      ProgressReport(0, maxIterations, SummaryStats.zero)
+  }
+
+  case class Config(numClusters: Int,
+                    maxIterations: Int,
+                    seed: Int = 0,
+                    executionContext: ExecutionContext,
+                    report: ProgressReport => IO[Unit] = _ => IO.pure(()))
+
+  def computeClusters(vecs: Vectors, config: Config): IO[Matrix] =
+    Monad[IO].tailRecM(Option.empty[(KMeans, Int)]) {
+      case None =>
+        for {
+          _ <- IO.shift(config.executionContext)
+          init <- IO.delay(KMeans.init(config.numClusters, vecs, config.seed))
+          report = ProgressReport(0, config.maxIterations, SummaryStats.zero)
+          _ <- config.report(report)
+        } yield Left(Some((init, 0)))
+      case Some((prev, i)) if i <= config.maxIterations =>
+        for {
+          _ <- IO.shift(config.executionContext)
+          next <- IO.delay(prev.iterate(vecs, 1))
+          report = ProgressReport(i, config.maxIterations, stepSize(prev.centroids, next.centroids))
+          _ <- config.report(report)
+        } yield Left(Some((next, i + 1)))
+      case Some((last, i)) =>
+        IO.pure(Right(Matrix(last.k, last.dimension, last.centroids)))
+    }
+
+  // Calculates the average step size of the centroids between 2 iterations.
+  private def stepSize(prevCentroids: Array[Array[Float]], nextCentroids: Array[Array[Float]]): SummaryStats = {
+    var stats = SummaryStats.newBuilder()
+    var i = 0
+    while (i < prevCentroids.length) {
+      stats.update(MathUtils.distance(prevCentroids(i), nextCentroids(i)))
+      i += 1
+    }
+    stats.result()
+  }
 
   private def apply(dimension: Int, centroids: Array[Array[Float]]): KMeans = {
     val offsets = new Array[Float](centroids.length)

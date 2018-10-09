@@ -4,6 +4,10 @@ import java.io.{BufferedReader, File, FileReader, Reader}
 import java.lang.Float.parseFloat
 import scala.collection.mutable.ArrayBuffer
 
+import cats.Monad
+import cats.effect.IO
+import cats.implicits._
+
 trait WordVectors {
   def word(i: Int): String
   def vectors: Matrix
@@ -61,40 +65,62 @@ object WordVectors {
     c != -1
   }
 
-  def readWord2Vec(reader: Reader): FlatWordVectors = {
-    val vecs = new ArrayBuffer[Array[Float]]()
-    val words = new ArrayBuffer[String]()
-
-    var chars: Long = 0
-    val addLine: (String, Array[Float]) => Unit = { (word, vec) =>
-      chars += word.length
-      words += word
-      vecs += vec
+  case class ProgressReport(dimension: Int, linesRead: Int, linesTotal: Int, charsPerWord: Float) {
+    def percentageRead: Float = linesRead.toFloat / linesTotal
+    def sizeEstimate: Long = {
+      val words = (2 * charsPerWord * linesRead).toLong
+      val vecs = (4 * dimension * linesRead).toLong
+      words + vecs
     }
-    val (size, dimension) = readHeader(reader)
-    var i = 0
-    while (i < size) {
-      readFast(reader, dimension)(addLine)
-      if (i % 10000 == 0) {
-        val len = if (i == 0) "?" else ((chars + i - 1) / i).toString
-        println(f"${(i * 100f) / size.toFloat}%.2f%% : $len mean length")
+  }
+
+  type Reporter = ProgressReport => IO[Unit]
+  val emptyReporter: Reporter = _ => IO.pure(())
+
+  private[this] val chunkSize: Int = 10000
+
+  def readWord2Vec(reader: Reader, report: Reporter = emptyReporter): IO[FlatWordVectors] =
+    IO.suspend {
+      val vecs = new ArrayBuffer[Array[Float]]()
+      val words = new ArrayBuffer[String]()
+
+      var chars: Long = 0
+      val addLine: (String, Array[Float]) => Unit = { (word, vec) =>
+        chars += word.length
+        words += word
+        vecs += vec
       }
-      i += 1
-    }
-    FlatWordVectors(words.toArray, Matrix(size, dimension, vecs.toArray))
-  }
+      val (size, dimension) = readHeader(reader)
 
-  def readWord2VecFile(file: File): FlatWordVectors = {
-    val reader = new BufferedReader(new FileReader(file))
-    try {
-      readWord2Vec(reader)
-    } finally {
-      reader.close()
-    }
-  }
+      def readChunk(len: Int): IO[Int] = IO.delay {
+        var i = 0
+        while (i < len) {
+          readFast(reader, dimension)(addLine)
+          i += 1
+        }
+        len
+      }
 
-  def readWord2VecPath(path: String): FlatWordVectors =
-    readWord2VecFile(new File(path))
+      Monad[IO].tailRecM(0) {
+        case i if i < size =>
+          val len = math.min(size - i, chunkSize)
+          for {
+            _ <- readChunk(len)
+            n = i + len
+            _ <- report(ProgressReport(dimension, n, size, chars.toFloat / n))
+          } yield Left(n)
+        case _ =>
+          report(ProgressReport(dimension, size, size, chars.toFloat / size))
+            .as(Right(FlatWordVectors(words.toArray, Matrix(size, dimension, vecs.toArray))))
+      }
+    }
+
+  def readWord2VecFile(file: File, report: Reporter = emptyReporter): IO[FlatWordVectors] =
+    IO.delay(new BufferedReader(new FileReader(file)))
+      .bracket(readWord2Vec(_, report))(reader => IO.delay(reader.close()))
+
+  def readWord2VecPath(path: String, report: Reporter = emptyReporter): IO[FlatWordVectors] =
+    readWord2VecFile(new File(path), report)
 
   // Goa: 50MB ann for 1M word vectors - 50 bytes!
 
