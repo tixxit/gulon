@@ -1,0 +1,35 @@
+syntax = "proto2";
+
+package gulon;
+
+option java_package = "net.tixxit.gulon";
+
+import "scalapb/scalapb.proto";
+
+message Vector {
+    repeated float values = 1 [(scalapb.field).collection_type="Array"];
+}
+
+message Quantizer {
+    required int32 dimension = 1;
+    repeated Vector centroids = 2;
+}
+
+message ProductQuantizer {
+    required int32 log_k = 1;
+    required int32 dimension = 2;
+    repeated Quantizer quantizers = 3;
+}
+
+message WordVector {
+    required string word = 1;
+    required Vector vector = 2;
+}
+
+message Index {
+    required int32 dimension = 1;
+    required bool normalize = 2;
+    required ProductQuantizer product_quantizer = 4;
+    required int32 length = 6;
+    repeated bytes codes = 7;
+}

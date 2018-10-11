@@ -14,7 +14,7 @@ final class KMeans(
 ) {
   final def k: Int = centroids.length
 
-  private def assign(vecs: Vectors, assignments: Array[Int]): Unit = {
+  def assign(vecs: Vectors, assignments: Array[Int]): Unit = {
     val rng = new Random(0)
     val from = vecs.from
     val until = vecs.until
@@ -69,7 +69,7 @@ object KMeans {
                     executionContext: ExecutionContext,
                     report: ProgressReport => IO[Unit] = _ => IO.pure(()))
 
-  def computeClusters(vecs: Vectors, config: Config): IO[Matrix] =
+  def computeClusters(vecs: Vectors, config: Config): IO[KMeans] =
     Monad[IO].tailRecM(Option.empty[(KMeans, Int)]) {
       case None =>
         for {
@@ -86,7 +86,7 @@ object KMeans {
           _ <- config.report(report)
         } yield Left(Some((next, i + 1)))
       case Some((last, i)) =>
-        IO.pure(Right(Matrix(last.k, last.dimension, last.centroids)))
+        IO.pure(Right(last))
     }
 
   // Calculates the average step size of the centroids between 2 iterations.

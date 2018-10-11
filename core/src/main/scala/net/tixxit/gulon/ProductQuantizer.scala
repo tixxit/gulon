@@ -7,19 +7,35 @@ import cats.effect.concurrent.Ref
 import cats.implicits._
 
 case class ProductQuantizer(
-  quantizer: Vector[ProductQuantizer.Quantizer]
-)
+  logK: Int,
+  quantizers: Vector[ProductQuantizer.Quantizer]
+) {
+  def k: Int = 1 << logK
+  def dimension: Int = quantizers.map(_.dimension).sum
+
+  def encode(vectors: Matrix): EncodedMatrix = {
+    val coder = Coder(logK, vectors.rows).get
+    val subvectors = Vectors.subvectors(vectors, quantizers.size)
+    val assignments = new Array[Int](vectors.rows)
+    val codes = quantizers.zip(subvectors)
+      .map { case (q, v) =>
+        q.clusters.assign(v, assignments)
+        coder.buildCode(assignments)
+      }
+    EncodedMatrix(coder)(codes)
+  }
+}
 
 object ProductQuantizer {
   case class Quantizer(
     dimension: Int,
     from: Int,
     until: Int,
-    centroids: Matrix)
+    clusters: KMeans)
 
   case class Config(
-    numSubvectors: Int,
-    numClusters: Int,
+    logClusters: Int,
+    numQuantizers: Int,
     maxIterations: Int,
     executionContext: ExecutionContext,
     report: ProgressReport => IO[Unit] = _ => IO.pure(()))
@@ -50,7 +66,8 @@ object ProductQuantizer {
               _ <- config.report(ProgressReport(reports))
             } yield ()
 
-            val kmeansConfig = KMeans.Config(numClusters = config.numClusters,
+            val numClusters = 1 << config.logClusters
+            val kmeansConfig = KMeans.Config(numClusters = numClusters,
                                              maxIterations = config.maxIterations,
                                              seed = i,
                                              executionContext = config.executionContext,
@@ -61,11 +78,11 @@ object ProductQuantizer {
             } yield Quantizer(vecs.dimension, vecs.from, vecs.until, clusters))
           }
 
-        IO.Par.unwrap(quantizers).map(ProductQuantizer(_))
+        IO.Par.unwrap(quantizers).map(ProductQuantizer(config.logClusters, _))
       }
 
   def apply(vectors: Matrix, config: Config): IO[ProductQuantizer] = {
-    val subvectors = Vectors.subvectors(vectors, config.numSubvectors)
+    val subvectors = Vectors.subvectors(vectors, config.numQuantizers)
     fromSubvectors(subvectors.toVector, config)
   }
 }

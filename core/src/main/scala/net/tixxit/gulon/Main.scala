@@ -1,18 +1,22 @@
 package net.tixxit.gulon
 
+import java.io.{File, FileOutputStream, OutputStream}
+
 import scala.concurrent.ExecutionContext
 
 import cats.effect.{ExitCode, IO, IOApp}
+import com.google.protobuf.ByteString
 
 object Main extends IOApp {
-  case class Config(k: Int, m: Int, n: Int, path: Option[String])
+  case class Config(k: Int, m: Int, n: Int, path: Option[String], out: Option[String])
 
-  def parseArgs(args: List[String], config: Config = Config(16, 30, 10, None)): Config =
+  def parseArgs(args: List[String], config: Config = Config(16, 30, 10, None, None)): Config =
     args match {
       case "-m" :: m :: rest => parseArgs(rest, config.copy(m = m.toInt))
       case "-n" :: n :: rest => parseArgs(rest, config.copy(n = n.toInt))
       case "-k" :: k :: rest => parseArgs(rest, config.copy(k = k.toInt))
-      case path :: rest => parseArgs(rest, config.copy(path = Some(path)))
+      case path :: rest if config.path.isEmpty => parseArgs(rest, config.copy(path = Some(path)))
+      case path :: rest => parseArgs(rest, config.copy(out = Some(path)))
       case Nil => config
     }
 
@@ -40,10 +44,27 @@ object Main extends IOApp {
     logProgress(p, s"iters=${report.completedIterations}/${report.totalIterations} step=${report.stepSize.mean} stdDev=${report.stepSize.stdDev}")
   }
 
+  private def buildIndex(quantizer: ProductQuantizer, vecs: Matrix): index.Index = {
+    val quantizers = quantizer.quantizers.map { 
+      case ProductQuantizer.Quantizer(dimension, _, _, clusters) =>
+        index.Quantizer(dimension, clusters.centroids.map(index.Vector(_)))
+    }
+    val encoded = quantizer.encode(vecs)
+    index.Index(dimension = quantizer.dimension,
+                normalize = false,
+                productQuantizer = index.ProductQuantizer(quantizer.logK, dimension = quantizer.dimension, quantizers = quantizers),
+                length = encoded.length,
+                codes = encoded.unwrappedEncodings.map(ByteString.copyFrom(_)))
+  }
+
+  private def writePath(path: String)(f: OutputStream => IO[Unit]): IO[Unit] =
+    IO.delay(new FileOutputStream(new File(path)))
+      .bracket(f)(o => IO.delay(o.close()))
+
   def run(args: List[String]): IO[ExitCode] = {
     val opts = parseArgs(args)
-    val config = ProductQuantizer.Config(numSubvectors = opts.m,
-                                         numClusters = opts.k,
+    val config = ProductQuantizer.Config(logClusters = opts.k,
+                                         numQuantizers = opts.m,
                                          maxIterations = opts.n,
                                          executionContext = ExecutionContext.global,
                                          report = logProductQuantizer)
@@ -54,6 +75,8 @@ object Main extends IOApp {
       quantizer <- ProductQuantizer(vecs.vectors, config)
       _ <- IO.delay(println())
       _ <- IO.delay(println(quantizer))
+      index = buildIndex(quantizer, vecs.vectors)
+      _ <- writePath(opts.out.get)(o => IO.delay(index.writeTo(o)))
     } yield ExitCode(0)
   }
 }
