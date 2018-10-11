@@ -44,12 +44,11 @@ object Main extends IOApp {
     logProgress(p, s"iters=${report.completedIterations}/${report.totalIterations} step=${report.stepSize.mean} stdDev=${report.stepSize.stdDev}")
   }
 
-  private def buildIndex(quantizer: ProductQuantizer, vecs: Matrix): index.Index = {
+  private def buildIndex(quantizer: ProductQuantizer, encoded: EncodedMatrix): index.Index = {
     val quantizers = quantizer.quantizers.map { 
       case ProductQuantizer.Quantizer(dimension, _, _, clusters) =>
         index.Quantizer(dimension, clusters.centroids.map(index.Vector(_)))
     }
-    val encoded = quantizer.encode(vecs)
     index.Index(dimension = quantizer.dimension,
                 normalize = false,
                 productQuantizer = index.ProductQuantizer(quantizer.logK, dimension = quantizer.dimension, quantizers = quantizers),
@@ -73,9 +72,11 @@ object Main extends IOApp {
       vecs <- WordVectors.readWord2VecPath(opts.path.get, logReadProgress)
       _ <- IO.delay(println("\nComputing product quantizer"))
       quantizer <- ProductQuantizer(vecs.vectors, config)
-      _ <- IO.delay(println())
-      _ <- IO.delay(println(quantizer))
-      index = buildIndex(quantizer, vecs.vectors)
+      _ <- IO.delay(println(s"\nEncoding vectors"))
+      encodedVectors = quantizer.encode(vecs.vectors)
+      _ <- IO.delay(println(s"Building index for ${vecs.vectors.rows} vectors"))
+      index = buildIndex(quantizer, encodedVectors)
+      _ <- IO.delay(println(s"Writing index to ${opts.out.get}"))
       _ <- writePath(opts.out.get)(o => IO.delay(index.writeTo(o)))
     } yield ExitCode(0)
   }

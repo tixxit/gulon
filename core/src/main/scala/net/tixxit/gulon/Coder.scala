@@ -23,6 +23,8 @@ trait Coder {
 }
 
 object Coder {
+  final val supportedWidths: List[Int] =
+    List(2, 4, 8, 10, 12, 16)
 
   /**
    * Construct a `Coder` for the given bit width and length. Supported 
