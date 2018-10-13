@@ -8,7 +8,9 @@ object Main extends IOApp {
     Opts.subcommand(BuildIndex.command)
 
   val app: Command[IO[ExitCode]] =
-    Command("gulon", "hodor", true)(commands)
+    Command("gulon",
+            "build approximate nearest neighbour indexes for keyed vectors",
+            true)(commands)
 
   def run(args: List[String]): IO[ExitCode] =
     app.parse(args) match {
