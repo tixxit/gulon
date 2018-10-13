@@ -4,7 +4,7 @@ import scala.concurrent.ExecutionContext
 import scala.util.Random
 
 import cats.Monad
-import cats.effect.IO
+import cats.effect.{ContextShift, IO}
 import cats.implicits._
 
 final class KMeans(
@@ -66,21 +66,20 @@ object KMeans {
   case class Config(numClusters: Int,
                     maxIterations: Int,
                     seed: Int = 0,
-                    executionContext: ExecutionContext,
                     report: ProgressReport => IO[Unit] = _ => IO.pure(()))
 
-  def computeClusters(vecs: Vectors, config: Config): IO[KMeans] =
+  def computeClusters(vecs: Vectors, config: Config)(implicit contextShift: ContextShift[IO]): IO[KMeans] =
     Monad[IO].tailRecM(Option.empty[(KMeans, Int)]) {
       case None =>
         for {
-          _ <- IO.shift(config.executionContext)
+          _ <- IO.shift
           init <- IO.delay(KMeans.init(config.numClusters, vecs, config.seed))
           report = ProgressReport(0, config.maxIterations, SummaryStats.zero)
           _ <- config.report(report)
         } yield Left(Some((init, 0)))
       case Some((prev, i)) if i <= config.maxIterations =>
         for {
-          _ <- IO.shift(config.executionContext)
+          _ <- IO.shift
           next <- IO.delay(prev.iterate(vecs, 1))
           report = ProgressReport(i, config.maxIterations, stepSize(prev.centroids, next.centroids))
           _ <- config.report(report)

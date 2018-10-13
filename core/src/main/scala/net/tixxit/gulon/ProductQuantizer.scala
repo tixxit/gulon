@@ -1,28 +1,34 @@
 package net.tixxit.gulon
 
-import scala.concurrent.ExecutionContext
-
-import cats.effect.IO
+import cats.effect.{ContextShift, IO}
 import cats.effect.concurrent.Ref
 import cats.implicits._
 
 case class ProductQuantizer(
-  logK: Int,
+  numClusters: Int,
   quantizers: Vector[ProductQuantizer.Quantizer]
 ) {
-  def k: Int = 1 << logK
+  val coderFactory: Coder.Factory = {
+    val maxWidth = 32 - java.lang.Integer.numberOfLeadingZeros(numClusters - 1)
+    Coder.factoryFor(maxWidth).getOrElse {
+      throw new IllegalArgumentException(s"too many clusters: $numClusters")
+    }
+  }
+
   def dimension: Int = quantizers.map(_.dimension).sum
 
-  def encode(vectors: Matrix): EncodedMatrix = {
-    val coder = Coder(logK, vectors.rows).get
+  def encode(vectors: Matrix)(implicit contextShift: ContextShift[IO]): IO[EncodedMatrix] = {
+    val coder = coderFactory(vectors.rows)
     val subvectors = Vectors.subvectors(vectors, quantizers.size)
     val assignments = new Array[Int](vectors.rows)
     val codes = quantizers.zip(subvectors)
-      .map { case (q, v) =>
-        q.clusters.assign(v, assignments)
-        coder.buildCode(assignments)
+      .parTraverse { case (q, v) =>
+        IO.shift.map { _ =>
+          q.clusters.assign(v, assignments)
+          coder.buildCode(assignments)
+        }
       }
-    EncodedMatrix(coder)(codes)
+    codes.map(EncodedMatrix(coder)(_))
   }
 }
 
@@ -34,10 +40,9 @@ object ProductQuantizer {
     clusters: KMeans)
 
   case class Config(
-    logClusters: Int,
+    numClusters: Int,
     numQuantizers: Int,
     maxIterations: Int,
-    executionContext: ExecutionContext,
     report: ProgressReport => IO[Unit] = _ => IO.pure(()))
 
   case class ProgressReport(
@@ -48,7 +53,7 @@ object ProductQuantizer {
     def stepSize: SummaryStats = kMeansReports.map(_.stepSize).reduce(_ ++ _)
   }
 
-  private def fromSubvectors(subvectors: Vector[Vectors], config: Config): IO[ProductQuantizer] =
+  private def fromSubvectors(subvectors: Vector[Vectors], config: Config)(implicit contextShift: ContextShift[IO]): IO[ProductQuantizer] =
     Ref[IO].of(Vector.fill(subvectors.size)(KMeans.ProgressReport.init(config.maxIterations)))
       .flatMap { reportsRef =>
         def updateReport(i: Int, report: KMeans.ProgressReport): IO[Vector[KMeans.ProgressReport]] =
@@ -57,31 +62,27 @@ object ProductQuantizer {
             (updated, updated)
           }
 
-        implicit val contextShift = IO.contextShift(config.executionContext)
-
         val quantizers = subvectors.zipWithIndex
-          .traverse { case (vecs, i) =>
+          .parTraverse { case (vecs, i) =>
             def makeReport(report: KMeans.ProgressReport): IO[Unit] = for {
               reports <- updateReport(i, report)
               _ <- config.report(ProgressReport(reports))
             } yield ()
 
-            val numClusters = 1 << config.logClusters
-            val kmeansConfig = KMeans.Config(numClusters = numClusters,
+            val kmeansConfig = KMeans.Config(numClusters = config.numClusters,
                                              maxIterations = config.maxIterations,
                                              seed = i,
-                                             executionContext = config.executionContext,
                                              report = makeReport)
-            IO.Par(for {
+            for {
               _ <- IO.shift
               clusters <- KMeans.computeClusters(vecs, kmeansConfig)
-            } yield Quantizer(vecs.dimension, vecs.from, vecs.until, clusters))
+            } yield Quantizer(vecs.dimension, vecs.from, vecs.until, clusters)
           }
 
-        IO.Par.unwrap(quantizers).map(ProductQuantizer(config.logClusters, _))
+        quantizers.map(ProductQuantizer(config.numClusters, _))
       }
 
-  def apply(vectors: Matrix, config: Config): IO[ProductQuantizer] = {
+  def apply(vectors: Matrix, config: Config)(implicit contextShift: ContextShift[IO]): IO[ProductQuantizer] = {
     val subvectors = Vectors.subvectors(vectors, config.numQuantizers)
     fromSubvectors(subvectors.toVector, config)
   }

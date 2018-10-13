@@ -2,12 +2,18 @@ scalaVersion := "2.12.7"
 
 name := "gulon"
 
+val catsEffectVersion = "1.0.0"
+val declineVersion = "0.5.0"
+
 lazy val root = (project in file("."))
   .aggregate(core, bench)
 
 lazy val core = project
   .settings(
-    libraryDependencies += "org.typelevel" %% "cats-effect" % "1.0.0",
+    libraryDependencies ++= Seq(
+      "org.typelevel" %% "cats-effect" % catsEffectVersion,
+      "com.monovore" %% "decline" % declineVersion
+    ),
     PB.targets in Compile := Seq(
       scalapb.gen() -> (sourceManaged in Compile).value
     ),

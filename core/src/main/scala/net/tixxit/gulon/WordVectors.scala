@@ -10,13 +10,14 @@ import cats.implicits._
 
 trait WordVectors {
   def word(i: Int): String
+  def keys: Vector[String]
   def vectors: Matrix
   def size: Int = vectors.rows
 }
 
 object WordVectors {
   case class FlatWordVectors(
-    keys: Array[String],
+    keys: Vector[String],
     vectors: Matrix
   ) extends WordVectors {
     def word(i: Int): String = keys(i)
@@ -82,7 +83,7 @@ object WordVectors {
   def readWord2Vec(reader: Reader, report: Reporter = emptyReporter): IO[FlatWordVectors] =
     IO.suspend {
       val vecs = new ArrayBuffer[Array[Float]]()
-      val words = new ArrayBuffer[String]()
+      val words = Vector.newBuilder[String]
 
       var chars: Long = 0
       val addLine: (String, Array[Float]) => Unit = { (word, vec) =>
@@ -111,7 +112,7 @@ object WordVectors {
           } yield Left(n)
         case _ =>
           report(ProgressReport(dimension, size, size, chars.toFloat / size))
-            .as(Right(FlatWordVectors(words.toArray, Matrix(size, dimension, vecs.toArray))))
+            .as(Right(FlatWordVectors(words.result(), Matrix(size, dimension, vecs.toArray))))
       }
     }
 

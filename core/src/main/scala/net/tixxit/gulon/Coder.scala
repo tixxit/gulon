@@ -26,6 +26,21 @@ object Coder {
   final val supportedWidths: List[Int] =
     List(2, 4, 8, 10, 12, 16)
 
+  case class Factory(width: Int, make: Int => Coder) {
+    def k: Int = 1 << width
+    def apply(length: Int): Coder = make(length)
+  }
+
+  def factoryFor(width: Int): Option[Factory] = {
+    if (width <= 2) Some(Factory(2, Coder2(_)))
+    else if (width <= 4) Some(Factory(4, Coder4(_)))
+    else if (width <= 8) Some(Factory(8, Coder8(_)))
+    else if (width <= 10) Some(Factory(10, l => BytePlus(Coder2(l))))
+    else if (width <= 12) Some(Factory(12, l => BytePlus(Coder4(l))))
+    else if (width <= 16) Some(Factory(16, l => BytePlus(Coder8(l))))
+    else None
+  }
+
   /**
    * Construct a `Coder` for the given bit width and length. Supported 
    * widths are limited to 2, 4, 8, 10, 12, 16.
@@ -33,15 +48,11 @@ object Coder {
    * @param width the bit-width of each quantizer's code
    * @param length the total number of quantizers
    */
-  def apply(width: Int, length: Int): Option[Coder] = width match {
-    case 2 => Some(Coder2(length))
-    case 4 => Some(Coder4(length))
-    case 8 => Some(Coder8(length))
-    case 10 => Some(BytePlus(Coder2(length)))
-    case 12 => Some(BytePlus(Coder4(length)))
-    case 16 => Some(BytePlus(Coder8(length)))
-    case _ => None
-  }
+  def apply(width: Int, length: Int): Coder =
+    factoryFor(width) match {
+      case Some(factory) => factory(length)
+      case None => throw new IllegalArgumentException(s"unsupported width: $width")
+    }
 
   private sealed trait CoderImpl extends Coder {
     type Code = Array[Byte]
