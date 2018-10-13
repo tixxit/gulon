@@ -1,9 +1,7 @@
-package net.tixxit.gulon
+package net.tixxit.gulon.command
 
 import cats.effect.{ExitCode, IO, IOApp}
 import com.monovore.decline._
-
-import net.tixxit.gulon.command.BuildIndex
 
 object Main extends IOApp {
   val commands: Opts[IO[ExitCode]] =
