@@ -4,13 +4,18 @@ case class SummaryStats(count: Int, mean: Float, s: Float) {
   def variance: Float = s / count
   def stdDev: Float = math.sqrt(variance).toFloat
 
-  def ++(that: SummaryStats): SummaryStats = {
-    val n = this.count + that.count
-    val d = this.mean - that.mean
-    SummaryStats(n,
-                 this.mean + (that.count.toFloat / n) * (that.mean - this.mean),
-                 this.s + that.s + d * d * this.count * that.count / n)
-  }
+  def ++(that: SummaryStats): SummaryStats =
+    if (that.count == 0) {
+      this
+    } else if (this.count == 0) {
+      that
+    } else {
+      val n = this.count + that.count
+      val d = this.mean - that.mean
+      SummaryStats(n,
+                   this.mean + (that.count.toFloat / n) * (that.mean - this.mean),
+                   this.s + that.s + d * d * this.count * that.count / n)
+    }
 
   override def toString: String =
     s"SummaryStats(mean = $mean, stdDev = $stdDev)"

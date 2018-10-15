@@ -32,7 +32,8 @@ object Coder {
   }
 
   def factoryFor(width: Int): Option[Factory] = {
-    if (width <= 2) Some(Factory(2, Coder2(_)))
+    if (width < 1) None
+    else if (width <= 2) Some(Factory(2, Coder2(_)))
     else if (width <= 4) Some(Factory(4, Coder4(_)))
     else if (width <= 8) Some(Factory(8, Coder8(_)))
     else if (width <= 10) Some(Factory(10, l => BytePlus(Coder2(l))))
@@ -83,7 +84,7 @@ object Coder {
       var i = 0
       while (i < indices.length) {
         val id = indices(i) & 0x3
-        val j = i >>> 2
+        val j = offset + (i >>> 2)
         code(j) = (code(j) | (id << ((i & 0x3) * 2))).toByte
         i += 1
       }
@@ -98,7 +99,7 @@ object Coder {
       var i = 0
       while (i < indices.length) {
         val id = indices(i) & 0xF
-        val j = i >>> 1
+        val j = offset + (i >>> 1)
         code(j) = (code(j) | (id << ((i & 0x1) * 4))).toByte
         i += 1
       }
@@ -112,7 +113,7 @@ object Coder {
     def buildCodeWithOffset(code: Array[Byte], indices: Array[Int], offset: Int): Unit = {
       var i = 0
       while (i < indices.length) {
-        code(i) = indices(i).toByte
+        code(offset + i) = indices(i).toByte
         i += 1
       }
     }
@@ -127,9 +128,13 @@ object Coder {
     val width: Int = lsb.width + 8
 
     def buildCode(indices: Array[Int]): Code = {
-      val code = new Array[Byte](length + lsb.bytesPerCode)
-      var i = 0
+      if (indices.length != length) {
+        throw new IllegalArgumentException(s"indices.length != ${length}")
+      }
+
       val len = length
+      val code = new Array[Byte](len + lsb.bytesPerCode)
+      var i = 0
       while (i < len) {
         code(i) = (indices(i) >>> lsb.width).toByte
         i += 1

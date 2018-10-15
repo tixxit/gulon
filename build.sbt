@@ -4,12 +4,22 @@ name := "gulon"
 
 val catsEffectVersion = "1.0.0"
 val declineVersion = "0.5.0"
+val scalaTestVersion = "3.0.5"
+val scalaCheckVersion = "1.14.0"
+
+val commonSettings = Seq(
+  libraryDependencies ++= Seq(
+    "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+    "org.scalacheck" %% "scalacheck" % scalaCheckVersion % "test"
+  )
+)
 
 lazy val root = (project in file("."))
   .aggregate(core, bench)
 
 lazy val core = project
   .settings(
+    commonSettings,
     libraryDependencies ++= Seq(
       "org.typelevel" %% "cats-effect" % catsEffectVersion,
       "com.monovore" %% "decline" % declineVersion
