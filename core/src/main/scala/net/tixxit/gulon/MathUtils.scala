@@ -50,7 +50,7 @@ object SummaryStats {
 }
 
 object MathUtils {
-  final def distance(x: Array[Float], y: Array[Float]): Float = {
+  final def distanceSq(x: Array[Float], y: Array[Float]): Float = {
     var sumSq = 0f
     var i = 0
     while (i < x.length) {
@@ -58,6 +58,10 @@ object MathUtils {
       sumSq += dx * dx
       i += 1
     }
-    math.sqrt(sumSq).toFloat
+    sumSq
+  }
+
+  final def distance(x: Array[Float], y: Array[Float]): Float = {
+    math.sqrt(distanceSq(x, y)).toFloat
   }
 }
