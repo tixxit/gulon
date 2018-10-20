@@ -1,5 +1,6 @@
 package net.tixxit.gulon
 
+import java.util.Arrays
 import scala.concurrent.ExecutionContext
 import scala.util.Random
 
@@ -13,6 +14,12 @@ final class KMeans(
   val centroids: Array[Array[Float]]
 ) {
   final def k: Int = centroids.length
+
+  def assign(vecs: Vectors): Array[Int] = {
+    val assignments = new Array[Int](vecs.size)
+    assign(vecs, assignments)
+    assignments
+  }
 
   def assign(vecs: Vectors, assignments: Array[Int]): Unit = {
     val rng = new Random(0)
@@ -56,11 +63,12 @@ final class KMeans(
 object KMeans {
   case class ProgressReport(numIterations: Int,
                             maxIterations: Int,
-                            stepSize: SummaryStats)
+                            stepSize: SummaryStats,
+                            converged: Boolean)
 
   object ProgressReport {
     def init(maxIterations: Int): ProgressReport =
-      ProgressReport(0, maxIterations, SummaryStats.zero)
+      ProgressReport(0, maxIterations, SummaryStats.zero, false)
   }
 
   case class Config(numClusters: Int,
@@ -69,22 +77,27 @@ object KMeans {
                     report: ProgressReport => IO[Unit] = _ => IO.pure(()))
 
   def computeClusters(vecs: Vectors, config: Config)(implicit contextShift: ContextShift[IO]): IO[KMeans] =
-    Monad[IO].tailRecM(Option.empty[(KMeans, Int)]) {
+    Monad[IO].tailRecM(Option.empty[(KMeans, Array[Int], Int)]) {
       case None =>
         for {
           _ <- IO.shift
           init <- IO.delay(KMeans.init(config.numClusters, vecs, config.seed))
-          report = ProgressReport(0, config.maxIterations, SummaryStats.zero)
+          assignments = init.assign(vecs)
+          report = ProgressReport(0, config.maxIterations, SummaryStats.zero, false)
           _ <- config.report(report)
-        } yield Left(Some((init, 0)))
-      case Some((prev, i)) if i <= config.maxIterations =>
+        } yield Left(Some((init, assignments, 0)))
+      case Some((prev, prevAssignments, i)) if i <= config.maxIterations =>
         for {
           _ <- IO.shift
-          next <- IO.delay(prev.iterate(vecs, 1))
-          report = ProgressReport(i, config.maxIterations, stepSize(prev.centroids, next.centroids))
+          next <- IO.delay(KMeans.fromAssignment(config.numClusters, vecs.dimension, vecs, prevAssignments))
+          assignments = next.assign(vecs)
+          converged = Arrays.equals(prevAssignments, assignments)
+          report = ProgressReport(i, config.maxIterations, stepSize(prev.centroids, next.centroids), converged)
           _ <- config.report(report)
-        } yield Left(Some((next, i + 1)))
-      case Some((last, i)) =>
+          i0 = if (converged) config.maxIterations + 1
+               else i + 1
+        } yield Left(Some((next, assignments, i0)))
+      case Some((last, _, i)) =>
         IO.pure(Right(last))
     }
 
@@ -127,7 +140,7 @@ object KMeans {
     KMeans(vecs.dimension, centroids)
   }
 
-  private def fromAssignment(k: Int, dimension: Int, vecs: Vectors, assignments: Array[Int]): KMeans = {
+  final def fromAssignment(k: Int, dimension: Int, vecs: Vectors, assignments: Array[Int]): KMeans = {
     val centroids: Array[Array[Float]] = new Array[Array[Float]](k)
     val counts: Array[Int] = new Array[Int](k)
     var i = 0
