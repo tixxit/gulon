@@ -15,29 +15,58 @@ case class ProductQuantizer(
     }
   }
 
-  def dimension: Int = quantizers.map(_.dimension).sum
+  val dimension: Int = quantizers.map(_.dimension).sum
 
+  /**
+   * Encodes/compresses a high dimensional `Matrix` (rows are vectors) into a
+   * small `EncodedMatrix`. This will perform the encoding in parallel using
+   * the implicit `ContextShift[IO]`.
+   */
   def encode(vectors: Matrix)(implicit contextShift: ContextShift[IO]): IO[EncodedMatrix] = {
     val coder = coderFactory(vectors.rows)
     val subvectors = Vectors.subvectors(vectors, quantizers.size)
-    val assignments = new Array[Int](vectors.rows)
     val codes = quantizers.zip(subvectors)
       .parTraverse { case (q, v) =>
         IO.shift.map { _ =>
-          q.clusters.assign(v, assignments)
-          coder.buildCode(assignments)
+          coder.buildCode(q.clusters.assign(v))
         }
       }
     codes.map(EncodedMatrix(coder)(_))
   }
+
+  /**
+   * Decodes a compressed/encoded matrix into an approximation of the original
+   * matrix.
+   */
+  def decode(encoded: EncodedMatrix): Matrix = {
+    val data = Array.fill(encoded.length)(new Array[Float](dimension))
+    encoded.encodings.zipWithIndex.foreach { case (code, k) =>
+      val q = quantizers(k)
+      val offset = q.from
+      var i = 0
+      val codeLen = encoded.length
+      while (i < codeLen) {
+        val row = data(i)
+        val centroidIndex = encoded.coder.getIndex(code, i)
+        val centroid = q.clusters.centroids(centroidIndex)
+        var j = 0
+        while (j < centroid.length) {
+          row(j + offset) = centroid(j)
+          j += 1
+        }
+        i += 1
+      }
+    }
+    Matrix(data.length, dimension, data)
+  }
 }
 
 object ProductQuantizer {
-  case class Quantizer(
-    dimension: Int,
-    from: Int,
-    until: Int,
-    clusters: KMeans)
+  case class Quantizer(from: Int,
+                       clusters: KMeans) {
+    def dimension: Int = clusters.dimension
+    def until: Int = from + dimension
+  }
 
   case class Config(
     numClusters: Int,
@@ -76,7 +105,7 @@ object ProductQuantizer {
             for {
               _ <- IO.shift
               clusters <- KMeans.computeClusters(vecs, kmeansConfig)
-            } yield Quantizer(vecs.dimension, vecs.from, vecs.until, clusters)
+            } yield Quantizer(vecs.from, clusters)
           }
 
         quantizers.map(ProductQuantizer(config.numClusters, _))

@@ -76,7 +76,7 @@ class KMeansSpec extends FunSuite with PropertyChecks {
   implicit val contextShift: ContextShift[IO] =
     IO.contextShift(scala.concurrent.ExecutionContext.Implicits.global)
 
-  test("converges") {
+  test("computeClusters converges") {
     forAll(genVectors) { case GeneratedVectors(vectors, clusters) =>
       val k0 = KMeans.init(clusters.size, vectors)
       def report(ref: Ref[IO, Boolean])(pr: KMeans.ProgressReport): IO[Unit] =
@@ -93,7 +93,7 @@ class KMeansSpec extends FunSuite with PropertyChecks {
     }
   }
 
-  test("progresses towards minimum") {
+  test("iterate progresses towards minimum") {
     forAll(genVectors) { case GeneratedVectors(vectors, clusters) =>
       val k0 = KMeans.init(clusters.size, vectors)
       val o0 = objective(vectors, k0)

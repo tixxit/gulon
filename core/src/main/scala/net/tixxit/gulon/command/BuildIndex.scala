@@ -46,8 +46,8 @@ object BuildIndex {
 
   private def buildIndex(quantizer: ProductQuantizer, encoded: EncodedMatrix): index.Index = {
     val quantizers = quantizer.quantizers.map { 
-      case ProductQuantizer.Quantizer(dimension, _, _, clusters) =>
-        index.Quantizer(dimension, clusters.centroids.map(index.Vector(_)))
+      case ProductQuantizer.Quantizer(_, clusters) =>
+        index.Quantizer(clusters.dimension, clusters.centroids.map(index.Vector(_)))
     }
     index.Index(dimension = quantizer.dimension,
                 normalize = false,

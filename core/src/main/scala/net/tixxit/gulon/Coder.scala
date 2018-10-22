@@ -23,6 +23,7 @@ trait Coder {
 }
 
 object Coder {
+
   final val supportedWidths: List[Int] =
     List(2, 4, 8, 10, 12, 16)
 
@@ -32,7 +33,8 @@ object Coder {
   }
 
   def factoryFor(width: Int): Option[Factory] = {
-    if (width < 1) None
+    if (width < 0) None
+    else if (width == 0) Some(Factory(0, Coder0(_)))
     else if (width <= 2) Some(Factory(2, Coder2(_)))
     else if (width <= 4) Some(Factory(4, Coder4(_)))
     else if (width <= 8) Some(Factory(8, Coder8(_)))
@@ -54,6 +56,21 @@ object Coder {
       case Some(factory) => factory(length)
       case None => throw new IllegalArgumentException(s"unsupported width: $width")
     }
+
+  private[this] val emptyCode: Array[Byte] = new Array[Byte](0)
+
+  final case class Coder0(length: Int) extends Coder {
+    type Code = Unit
+    def width: Int = 0
+    def wrapCode(encoded: Array[Byte]): Unit = ()
+    def unwrapCode(code: Unit): Array[Byte] = emptyCode
+    def buildCode(indices: Array[Int]): Code = ()
+    def getIndex(code: Unit, i: Int): Int = {
+      if (i < 0 || i >= length)
+        throw new IndexOutOfBoundsException(i.toString)
+      0
+    }
+  }
 
   private sealed trait CoderImpl extends Coder {
     type Code = Array[Byte]

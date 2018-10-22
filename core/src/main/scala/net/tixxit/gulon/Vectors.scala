@@ -24,6 +24,28 @@ final case class Vectors(matrix: Matrix, from: Int, until: Int) {
     Matrix(size, dimension, s)
   }
 
+  override def toString: String = {
+    val s = matrix.data.map { row =>
+      Array.range(from, until).map { i =>
+        row(i).toString
+      }
+    }
+    val widths = Array.tabulate(dimension) { i =>
+      s.map(_(i).length).max
+    }
+    s.iterator
+      .map { row =>
+        row.iterator
+          .zipWithIndex
+          .map { case (c, i) =>
+            val padding = widths(i) - c.length
+            (" " * padding) + c
+          }
+          .mkString(", ")
+      }
+      .mkString("Vectors(\n  ", "\n  ", "\n)")
+  }
+
   override def hashCode: Int =
     (0 until size).map { i =>
       val row = data(i)

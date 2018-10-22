@@ -9,7 +9,7 @@ sealed trait EncodedMatrix {
   val coder: Coder
   def encodings: Vector[coder.Code]
 
-  def length: Int = encodings.length
+  def length: Int = coder.length
   def apply(i: Int): EncodedVector =
     new EncodedVector {
       def length: Int = encodings.length

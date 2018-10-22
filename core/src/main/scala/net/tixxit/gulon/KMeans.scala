@@ -8,7 +8,7 @@ import cats.Monad
 import cats.effect.{ContextShift, IO}
 import cats.implicits._
 
-final class KMeans(
+final class KMeans private (
   val dimension: Int,
   offsets: Array[Float],
   val centroids: Array[Array[Float]]
@@ -112,7 +112,7 @@ object KMeans {
     stats.result()
   }
 
-  private def apply(dimension: Int, centroids: Array[Array[Float]]): KMeans = {
+  final def apply(dimension: Int, centroids: Array[Array[Float]]): KMeans = {
     val offsets = new Array[Float](centroids.length)
     var i = 0
     while (i < centroids.length) {
