@@ -9,16 +9,20 @@ final class TopKHeap(
   private def leftChild(i: Int): Int = 2 * i + 1
   private def rightChild(i: Int): Int = 2 * i + 2
 
+  private def swap(i: Int, j: Int): Unit = {
+    val tmpKey = keys(i)
+    val tmpValue = values(i)
+    keys(i) = keys(j)
+    values(i) = values(j)
+    keys(j) = tmpKey
+    values(j) = tmpValue
+  }
+
   private def percolateUp(i: Int): Unit =
     if (i > 0) {
       val p = parent(i)
       if (values(i) > values(p)) {
-        val tmpKey = keys(i)
-        val tmpValue = values(i)
-        keys(i) = keys(p)
-        values(i) = values(p)
-        keys(p) = tmpKey
-        values(p) = tmpValue
+        swap(i, p)
         percolateUp(p)
       }
     }
@@ -32,6 +36,7 @@ final class TopKHeap(
     if (rc < size && values(top) < values(rc))
       top = rc
     if (top != i) {
+      swap(i, top)
       percolateDown(top)
     }
   }
