@@ -44,18 +44,6 @@ object BuildIndex {
     CommandUtils.logProgress(p, s"iters=${report.completedIterations}/${report.totalIterations} step=${report.stepSize.mean} stdDev=${report.stepSize.stdDev}")
   }
 
-  private def buildIndex(quantizer: ProductQuantizer, encoded: EncodedMatrix): index.Index = {
-    val quantizers = quantizer.quantizers.map { 
-      case ProductQuantizer.Quantizer(_, clusters) =>
-        index.Quantizer(clusters.dimension, clusters.centroids.map(index.Vector(_)))
-    }
-    index.Index(dimension = quantizer.dimension,
-                normalize = false,
-                productQuantizer = index.ProductQuantizer(quantizer.coderFactory.width, dimension = quantizer.dimension, quantizers = quantizers),
-                length = encoded.length,
-                codes = encoded.unwrappedEncodings.map(ByteString.copyFrom(_)))
-  }
-
   def run(implicit contextShift: ContextShift[IO]): Opts[IO[ExitCode]] = {
     import Config._
 
@@ -74,9 +62,9 @@ object BuildIndex {
           _ <- IO.delay(println(s"\nEncoding vectors"))
           encodedVectors <- quantizer.encode(vecs.vectors)
           _ <- IO.delay(println(s"Building index for ${vecs.vectors.rows} vectors"))
-          index = buildIndex(quantizer, encodedVectors)
+          index = Index(KeyIndex(vecs.keys), Index.PQIndex(quantizer, encodedVectors))
           _ <- IO.delay(println(s"Writing index to ${config.output}"))
-          _ <- CommandUtils.writePath(config.output)(o => IO.delay(index.writeTo(o)))
+          _ <- CommandUtils.writePath(config.output)(o => IO.delay(Index.toProtobuf(index).writeTo(o)))
         } yield ExitCode(0)
       }
   }

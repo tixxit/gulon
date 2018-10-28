@@ -1,6 +1,6 @@
 package net.tixxit.gulon.command
 
-import java.io.{File, FileOutputStream, OutputStream}
+import java.io.{File, FileOutputStream, FileInputStream, InputStream, OutputStream}
 import java.nio.file.Path
 
 import cats.effect.IO
@@ -25,4 +25,7 @@ object CommandUtils {
   final def writePath(path: Path)(f: OutputStream => IO[Unit]): IO[Unit] =
     IO.delay(new FileOutputStream(path.toFile))
       .bracket(f)(o => IO.delay(o.close()))
+
+  final def openPath(path: Path): IO[InputStream] =
+    IO.delay(new FileInputStream(path.toFile))
 }

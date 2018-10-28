@@ -2,34 +2,49 @@ syntax = "proto2";
 
 package gulon;
 
-option java_package = "net.tixxit.gulon";
+option java_package = "net.tixxit.gulon.protobuf";
+option (scalapb.options) = {
+    flat_package: true
+};
 
 import "scalapb/scalapb.proto";
 
-message Vector {
+message FloatVector {
     repeated float values = 1 [(scalapb.field).collection_type="Array"];
 }
 
-message Quantizer {
-    required int32 dimension = 1;
-    repeated Vector centroids = 2;
-}
-
 message ProductQuantizer {
-    required int32 log_k = 1;
-    required int32 dimension = 2;
-    repeated Quantizer quantizers = 3;
+    required int32 num_clusters = 1;
+    repeated Quantizer quantizers = 2;
+
+    message Quantizer {
+        required int32 start_index = 1;
+        required int32 dimension = 2;
+        repeated FloatVector centroids = 3;
+    }
 }
 
-message WordVector {
-    required string word = 1;
-    required Vector vector = 2;
+message WordList {
+    repeated string words = 1 [(scalapb.field).collection_type="Vector"];
+}
+
+message EncodedMatrix {
+    required int32 code_width = 1;
+    required int32 length = 2;
+    repeated bytes encodings = 3;
+}
+
+message PQIndex {
+    required ProductQuantizer product_quantizer = 1;
+    required EncodedMatrix data = 2;
 }
 
 message Index {
-    required int32 dimension = 1;
-    required bool normalize = 2;
-    required ProductQuantizer product_quantizer = 4;
-    required int32 length = 6;
-    repeated bytes codes = 7;
+    oneof key_index {
+    	WordList simple_key_index = 1;
+    }
+
+    oneof vector_index {
+    	PQIndex product_quantizer_index = 2;
+    }
 }

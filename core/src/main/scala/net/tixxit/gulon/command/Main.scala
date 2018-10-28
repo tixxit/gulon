@@ -6,6 +6,7 @@ import com.monovore.decline._
 object Main extends IOApp {
   val commands: Opts[IO[ExitCode]] =
     Opts.subcommand(BuildIndex.command)
+      .orElse(Opts.subcommand(Query.command))
 
   val app: Command[IO[ExitCode]] =
     Command("gulon",

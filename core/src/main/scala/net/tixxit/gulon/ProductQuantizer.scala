@@ -68,6 +68,25 @@ object ProductQuantizer {
     def until: Int = from + dimension
   }
 
+  def toProtobuf(pq: ProductQuantizer): protobuf.ProductQuantizer =
+    protobuf.ProductQuantizer(
+      pq.numClusters,
+      pq.quantizers.map { case Quantizer(from, kmeans) =>
+        val centroids = kmeans.centroids.map { xs =>
+          protobuf.FloatVector(xs)
+        }
+        protobuf.ProductQuantizer.Quantizer(
+          from, kmeans.dimension, centroids)
+      })
+
+  def fromProtobuf(pq: protobuf.ProductQuantizer): ProductQuantizer =
+    ProductQuantizer(
+      pq.numClusters,
+      pq.quantizers.iterator.map {
+        case protobuf.ProductQuantizer.Quantizer(from, dim, centroids) =>
+          Quantizer(from, KMeans(dim, centroids.iterator.map(_.values).toArray))
+      }.toVector)
+
   case class Config(
     numClusters: Int,
     numQuantizers: Int,

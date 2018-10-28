@@ -1,5 +1,7 @@
 package net.tixxit.gulon
 
+import com.google.protobuf.ByteString
+
 trait EncodedVector {
   def length: Int
   def apply(i: Int): Int
@@ -21,6 +23,21 @@ sealed trait EncodedMatrix {
 }
 
 object EncodedMatrix {
+  def toProtobuf(m: EncodedMatrix): protobuf.EncodedMatrix =
+    protobuf.EncodedMatrix(m.coder.width,
+                        m.coder.length,
+                        m.unwrappedEncodings.map(ByteString.copyFrom(_)))
+
+  def fromProtobuf(m: protobuf.EncodedMatrix): EncodedMatrix = {
+    val coder = Coder(m.codeWidth, m.length)
+    val encodings = m.encodings.iterator
+      .map { byteString =>
+        coder.wrapCode(byteString.toByteArray())
+      }
+      .toVector
+    EncodedMatrix(coder)(encodings)
+  }
+
   def apply(coder0: Coder)(encodings0: Vector[coder0.Code]): EncodedMatrix =
     new EncodedMatrix {
       final val coder: coder0.type = coder0

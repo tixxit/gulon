@@ -7,7 +7,7 @@ case class HuffmanKeyIndex(
   dictionary: HuffmanKeyIndex.Dictionary,
   data: Array[Byte]//,
   //mask: IndexedBitSet
-) extends KeyIndex {
+) {
   def length: Int = ???
   def apply(i: Int): String = ???
   def iterator: Iterator[String] = ???
