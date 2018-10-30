@@ -15,7 +15,7 @@ sealed trait EncodedMatrix {
   def apply(i: Int): EncodedVector =
     new EncodedVector {
       def length: Int = encodings.length
-      def apply(j: Int): Int = coder.getIndex(encodings(i), j)
+      def apply(j: Int): Int = coder.getIndex(encodings(j), i)
     }
 
   def unwrappedEncodings: Vector[Array[Byte]] =

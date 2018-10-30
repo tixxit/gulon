@@ -34,6 +34,23 @@ case class ProductQuantizer(
     codes.map(EncodedMatrix(coder)(_))
   }
 
+  def decode(vec: EncodedVector): Array[Float] = {
+    val xs = new Array[Float](dimension)
+    var k = 0
+    while (k < quantizers.length) {
+      val q = quantizers(k)
+      val offset = q.from
+      val centroid = q.clusters.centroids(vec(k))
+      var i = 0
+      while (i < centroid.length) {
+        xs(i + offset) = centroid(i)
+        i += 1
+      }
+      k += 1
+    }
+    xs
+  }
+
   /**
    * Decodes a compressed/encoded matrix into an approximation of the original
    * matrix.

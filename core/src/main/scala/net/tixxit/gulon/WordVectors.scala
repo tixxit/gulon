@@ -8,16 +8,36 @@ import cats.Monad
 import cats.effect.IO
 import cats.implicits._
 
-trait WordVectors {
+sealed trait WordVectors {
+  import WordVectors.{Indexed, Unindexed}
+
   def word(i: Int): String
-  def keys: Vector[String]
   def vectors: Matrix
+
   def size: Int = vectors.rows
+
+  def indexed: WordVectors.Indexed = this match {
+    case Unindexed(keys, _) =>
+      val indices = Array.range(0, size).sortBy(keys(_))
+      val sortedKeys = indices.map(keys(_))
+      val keyIndex = KeyIndex.unsafeSortedWordList(sortedKeys)
+      val sortedData = indices.map(vectors.data(_))
+      Indexed(keyIndex, vectors.copy(data = sortedData))
+    case indexed @ Indexed(_, _) =>
+      indexed
+  }
 }
 
 object WordVectors {
-  case class FlatWordVectors(
+  case class Unindexed(
     keys: Vector[String],
+    vectors: Matrix
+  ) extends WordVectors {
+    def word(i: Int): String = keys(i)
+  }
+
+  case class Indexed(
+    keys: KeyIndex,
     vectors: Matrix
   ) extends WordVectors {
     def word(i: Int): String = keys(i)
@@ -80,7 +100,7 @@ object WordVectors {
 
   private[this] val chunkSize: Int = 10000
 
-  def readWord2Vec(reader: Reader, report: Reporter = emptyReporter): IO[FlatWordVectors] =
+  def readWord2Vec(reader: Reader, report: Reporter = emptyReporter): IO[Unindexed] =
     IO.suspend {
       val vecs = new ArrayBuffer[Array[Float]]()
       val words = Vector.newBuilder[String]
@@ -112,15 +132,15 @@ object WordVectors {
           } yield Left(n)
         case _ =>
           report(ProgressReport(dimension, size, size, chars.toFloat / size))
-            .as(Right(FlatWordVectors(words.result(), Matrix(size, dimension, vecs.toArray))))
+            .as(Right(Unindexed(words.result(), Matrix(size, dimension, vecs.toArray))))
       }
     }
 
-  def readWord2VecFile(file: File, report: Reporter = emptyReporter): IO[FlatWordVectors] =
+  def readWord2VecFile(file: File, report: Reporter = emptyReporter): IO[Unindexed] =
     IO.delay(new BufferedReader(new FileReader(file)))
       .bracket(readWord2Vec(_, report))(reader => IO.delay(reader.close()))
 
-  def readWord2VecPath(path: String, report: Reporter = emptyReporter): IO[FlatWordVectors] =
+  def readWord2VecPath(path: String, report: Reporter = emptyReporter): IO[Unindexed] =
     readWord2VecFile(new File(path), report)
 
   // Goa: 50MB ann for 1M word vectors - 50 bytes!

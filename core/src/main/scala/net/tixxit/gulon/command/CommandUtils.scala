@@ -1,6 +1,8 @@
 package net.tixxit.gulon.command
 
-import java.io.{File, FileOutputStream, FileInputStream, InputStream, OutputStream}
+import java.io.{BufferedReader, File,
+                FileOutputStream, FileInputStream,
+                InputStream, InputStreamReader, OutputStream}
 import java.nio.file.Path
 
 import cats.effect.IO
@@ -28,4 +30,19 @@ object CommandUtils {
 
   final def openPath(path: Path): IO[InputStream] =
     IO.delay(new FileInputStream(path.toFile))
+
+  final def withPathOrStdIn(maybePath: Option[Path])(f: BufferedReader => IO[Unit]): IO[Unit] =
+    maybePath match {
+      case Some(path) =>
+        def f0: InputStream => IO[Unit] = { in =>
+          f(new BufferedReader(new InputStreamReader(in, "utf-8")))
+        }
+        openPath(path).bracket(f0)(is => IO.delay(is.close()))
+
+      case None =>
+        for {
+          reader <- IO.delay(new BufferedReader(new InputStreamReader(System.in, "utf-8")))
+          _ <- f(reader)
+        } yield ()
+    }
 }

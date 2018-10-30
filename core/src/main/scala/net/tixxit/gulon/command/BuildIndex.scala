@@ -57,12 +57,13 @@ object BuildIndex {
         for {
           _ <- IO.delay(println("Reading word vectors"))
           vecs <- WordVectors.readWord2VecFile(config.input.toFile, logReadProgress)
+          indexed = vecs.indexed
           _ <- IO.delay(println("\nComputing product quantizer"))
-          quantizer <- ProductQuantizer(vecs.vectors, pqConfig)
+          quantizer <- ProductQuantizer(indexed.vectors, pqConfig)
           _ <- IO.delay(println(s"\nEncoding vectors"))
-          encodedVectors <- quantizer.encode(vecs.vectors)
-          _ <- IO.delay(println(s"Building index for ${vecs.vectors.rows} vectors"))
-          index = Index(KeyIndex(vecs.keys), Index.PQIndex(quantizer, encodedVectors))
+          encodedVectors <- quantizer.encode(indexed.vectors)
+          _ <- IO.delay(println(s"Building index for ${indexed.vectors.rows} vectors"))
+          index = Index(indexed.keys, Index.PQIndex(quantizer, encodedVectors))
           _ <- IO.delay(println(s"Writing index to ${config.output}"))
           _ <- CommandUtils.writePath(config.output)(o => IO.delay(Index.toProtobuf(index).writeTo(o)))
         } yield ExitCode(0)

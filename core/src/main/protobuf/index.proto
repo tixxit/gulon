@@ -24,8 +24,8 @@ message ProductQuantizer {
     }
 }
 
-message WordList {
-    repeated string words = 1 [(scalapb.field).collection_type="Vector"];
+message SortedWordList {
+    repeated string words = 1 [(scalapb.field).collection_type="Array"];
 }
 
 message EncodedMatrix {
@@ -41,7 +41,7 @@ message PQIndex {
 
 message Index {
     oneof key_index {
-    	WordList simple_key_index = 1;
+    	SortedWordList simple_key_index = 1;
     }
 
     oneof vector_index {

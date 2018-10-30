@@ -16,11 +16,24 @@ sealed trait Index {
   def batchQuery(k: Int, vectors: Matrix): Vector[Index.Result]
 
   /**
+   * Returns the approximate point of `word` from the index. If the word is not
+   * in the index, this returns `None`.
+   */
+  def lookup(word: String): Option[Array[Float]]
+
+  /**
    * Return the approximate `k` nearest neighbours the query
    * `vector`.
    */
   def query(k: Int, vector: Array[Float]): Index.Result =
     batchQuery(k, Matrix(1, vector.length, Array(vector)))(0)
+
+  /**
+   * Returns the k-nearest neighbours to `word` from the index. If the word is
+   * not in the index, this returns `None`.
+   */
+  def queryByWord(k: Int, word: String): Option[Index.Result] =
+    lookup(word).map(query(k, _))
 }
 
 object Index {
@@ -33,9 +46,9 @@ object Index {
 
   def toProtobuf(index: Index): protobuf.Index = {
     val IndexImpl(keyIndex, vecIndex) = index
-    val KeyIndex.SimpleKeyIndex(words) = keyIndex
+    val KeyIndex.SortedWordList(words) = keyIndex
     val PQIndex(pq, data) = vecIndex
-    val wordList = protobuf.WordList(words)
+    val wordList = protobuf.SortedWordList(words)
     val pqIndex = protobuf.PQIndex(
       ProductQuantizer.toProtobuf(pq),
       EncodedMatrix.toProtobuf(data))
@@ -47,7 +60,7 @@ object Index {
   def fromProtobuf(index: protobuf.Index): Index = {
     val keyIndex = index.keyIndex match {
       case protobuf.Index.KeyIndex.SimpleKeyIndex(wordList) =>
-        KeyIndex.SimpleKeyIndex(wordList.words)
+        KeyIndex.unsafeSortedWordList(wordList.words)
       case protobuf.Index.KeyIndex.Empty =>
         throw new IllegalArgumentException("keyIndex empty")
     }
@@ -81,11 +94,17 @@ object Index {
    * A low-level index on vectors, keyed by index.
    */
   sealed trait VectorIndex {
+    def length: Int
+    def decode(row: Int): Array[Float]
     def batchQuery(k: Int, vectors: Matrix): Vector[TopKHeap]
   }
 
   case class IndexImpl(keyIndex: KeyIndex,
                        vectorIndex: VectorIndex) extends Index {
+
+    def lookup(word: String): Option[Array[Float]] =
+      keyIndex.lookup(word).map(vectorIndex.decode(_))
+
     def batchQuery(k: Int, vectors: Matrix): Vector[Index.Result] =
       vectorIndex.batchQuery(k, vectors)
         .map { heap =>
@@ -152,6 +171,11 @@ object Index {
 
   case class PQIndex(productQuantizer: ProductQuantizer,
                      data: EncodedMatrix) extends VectorIndex {
+    def length: Int = data.length
+
+    def decode(row: Int): Array[Float] =
+      productQuantizer.decode(data(row))
+
     private def distances(preparedQuery: Array[Array[Float]],
                           from: Int, len: Int): Array[Float] = {
       val ds = new Array[Float](len)
