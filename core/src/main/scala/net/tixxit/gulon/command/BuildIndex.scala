@@ -44,6 +44,31 @@ object BuildIndex {
     CommandUtils.logProgress(p, s"iters=${report.completedIterations}/${report.totalIterations} step=${report.stepSize.mean} stdDev=${report.stepSize.stdDev}")
   }
 
+  def buildSublinearIndex(vecs: WordVectors,
+                          coarseConfig: KMeans.Config,
+                          pqConfig: ProductQuantizer.Config)(implicit
+                          contextShift: ContextShift[IO]): IO[Index] = for {
+    _ <- IO.delay(println("\nComputing initial, coarse grained clustering"))
+    clustering <- KMeans.computeClusters(Vectors(vecs.toMatrix), coarseConfig)
+    _ <- IO.delay(println("\nRe-indexing word vectors"))
+    grouped = vecs.grouped(clustering)
+    _ <- IO.delay(println("\nComputing product quantizer"))
+    quantizer <- ProductQuantizer(grouped.residuals, pqConfig)
+    _ <- IO.delay(println(s"Building index for ${grouped.size} vectors"))
+    index <- Index.grouped(grouped, quantizer, ???)
+  } yield index
+
+  def buildLinearIndex(vecs: WordVectors,
+                       pqConfig: ProductQuantizer.Config)(implicit
+                       contextShift: ContextShift[IO]): IO[Index] = for {
+    _ <- IO.delay(println("\nRe-indexing word vectors"))
+    indexed = vecs.indexed
+    _ <- IO.delay(println("\nComputing product quantizer"))
+    quantizer <- ProductQuantizer(indexed.toMatrix, pqConfig)
+    _ <- IO.delay(println(s"Building index for ${indexed.size} vectors"))
+    index <- Index.sorted(indexed, quantizer)
+  } yield index
+
   def run(implicit contextShift: ContextShift[IO]): Opts[IO[ExitCode]] = {
     import Config._
 
@@ -57,13 +82,7 @@ object BuildIndex {
         for {
           _ <- IO.delay(println("Reading word vectors"))
           vecs <- WordVectors.readWord2VecFile(config.input.toFile, logReadProgress)
-          indexed = vecs.indexed
-          _ <- IO.delay(println("\nComputing product quantizer"))
-          quantizer <- ProductQuantizer(indexed.vectors, pqConfig)
-          _ <- IO.delay(println(s"\nEncoding vectors"))
-          encodedVectors <- quantizer.encode(indexed.vectors)
-          _ <- IO.delay(println(s"Building index for ${indexed.vectors.rows} vectors"))
-          index = Index(indexed.keys, Index.PQIndex(quantizer, encodedVectors))
+          index <- buildLinearIndex(vecs, pqConfig)
           _ <- IO.delay(println(s"Writing index to ${config.output}"))
           _ <- CommandUtils.writePath(config.output)(o => IO.delay(Index.toProtobuf(index).writeTo(o)))
         } yield ExitCode(0)

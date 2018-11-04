@@ -41,16 +41,29 @@ final class TopKHeap(
     }
   }
 
+  def merge(that: TopKHeap): Unit = {
+    var i = 0
+    val ks = that.keys
+    val vs = that.values
+    val len = ks.length
+    while (i < len) {
+      update(ks(i), vs(i))
+      i += 1
+    }
+  }
+
   def isEmpty: Boolean = size == 0
 
-  def delete(): Unit = {
+  def delete(): Int = {
     if (size <= 0) {
       throw new IllegalStateException("heap is empty")
     }
     size -= 1
+    val removed = keys(0)
     keys(0) = keys(size)
     values(0) = values(size)
     percolateDown(0)
+    removed
   }
 
   def update(k: Int, v: Float): Unit = {

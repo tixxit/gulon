@@ -50,10 +50,33 @@ object SummaryStats {
 }
 
 object MathUtils {
+  final def add(x: Array[Float], y: Array[Float]): Array[Float] = {
+    val z = new Array[Float](x.length)
+    val len = x.length
+    var i = 0
+    while (i < len) {
+      z(i) = x(i) + y(i)
+      i += 1
+    }
+    z
+  }
+
+  final def subtract(x: Array[Float], y: Array[Float]): Array[Float] = {
+    val z = new Array[Float](x.length)
+    val len = x.length
+    var i = 0
+    while (i < len) {
+      z(i) = x(i) - y(i)
+      i += 1
+    }
+    z
+  }
+
   final def distanceSq(x: Array[Float], y: Array[Float]): Float = {
     var sumSq = 0f
     var i = 0
-    while (i < x.length) {
+    val len = x.length
+    while (i < len) {
       val dx = y(i) - x(i)
       sumSq += dx * dx
       i += 1

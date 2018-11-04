@@ -1,5 +1,8 @@
 package net.tixxit.gulon
 
+import java.lang.{Object => JObject}
+import java.util.Arrays
+
 /**
  * An index into a large set of string keys.
  */
@@ -8,19 +11,40 @@ sealed trait KeyIndex extends Seq[String] {
 }
 
 object KeyIndex {
-
-  /** Requires words to be sorted. */
-  def unsafeSortedWordList(words: Array[String]): KeyIndex =
-    SortedWordList(words)
-
-  case class SortedWordList private (index: Array[String]) extends KeyIndex {
-    def length: Int = index.length
-    def apply(i: Int): String = index(i)
-    def iterator: Iterator[String] = index.iterator
+  case class Sorted(keys: Array[String]) extends KeyIndex {
+    def length: Int = keys.length
+    def apply(i: Int): String = keys(i)
+    def iterator: Iterator[String] = keys.iterator
     def lookup(key: String): Option[Int] = {
-      val i = java.util.Arrays.binarySearch(index.asInstanceOf[Array[java.lang.Object]], key)
+      val i = Arrays.binarySearch(keys.asInstanceOf[Array[JObject]], key)
       if (i >= 0) Some(i)
       else None
+    }
+  }
+
+  case class Grouped(
+    keys: Array[String],
+    groupOffsets: Array[Int]
+  ) extends KeyIndex {
+    def length: Int = keys.length
+    def apply(i: Int): String = keys(i)
+    def iterator: Iterator[String] = keys.iterator
+    def lookup(key: String): Option[Int] = {
+      var i = 0
+      var from = 0
+      val offsets = groupOffsets
+      while (i <= offsets.length) {
+        val to = if (i < offsets.length) offsets(i)
+                 else keys.length
+        val result = Arrays.binarySearch(
+          keys.asInstanceOf[Array[JObject]], from, to, key)
+        if (result >= 0) {
+          return Some(result)
+        }
+        from = to
+        i += 1
+      }
+      None
     }
   }
 }

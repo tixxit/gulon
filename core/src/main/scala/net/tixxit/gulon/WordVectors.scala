@@ -2,45 +2,107 @@ package net.tixxit.gulon
 
 import java.io.{BufferedReader, File, FileReader, Reader}
 import java.lang.Float.parseFloat
-import scala.collection.mutable.ArrayBuffer
+import java.util.Arrays
+import scala.collection.mutable.{ArrayBuffer, ArrayBuilder}
 
 import cats.Monad
 import cats.effect.IO
 import cats.implicits._
 
 sealed trait WordVectors {
-  import WordVectors.{Indexed, Unindexed}
+  import WordVectors.{Grouped, Sorted, Unindexed}
 
   def word(i: Int): String
-  def vectors: Matrix
+  def apply(i: Int): Array[Float]
 
-  def size: Int = vectors.rows
+  def toMatrix: Matrix
 
-  def indexed: WordVectors.Indexed = this match {
-    case Unindexed(keys, _) =>
-      val indices = Array.range(0, size).sortBy(keys(_))
-      val sortedKeys = indices.map(keys(_))
-      val keyIndex = KeyIndex.unsafeSortedWordList(sortedKeys)
-      val sortedData = indices.map(vectors.data(_))
-      Indexed(keyIndex, vectors.copy(data = sortedData))
-    case indexed @ Indexed(_, _) =>
+  def size: Int
+  def dimension: Int
+
+  def grouped(clustering: KMeans): WordVectors.Grouped = {
+    val vecs = toMatrix
+    val assignments = clustering.assign(Vectors(vecs))
+    val indices = Array.range(0, size)
+      .sortBy(word(_))
+      .sortBy(assignments(_))
+    val groupedKeys = new Array[String](indices.length)
+    val residuals = new Array[Array[Float]](indices.length)
+    val offsetsBldr = ArrayBuilder.make[Int]()
+    var i = 0
+    var prev = 0
+    val data = vecs.data
+    val centroids = clustering.centroids
+    while (i < indices.length) {
+      val j = indices(i)
+      val a = assignments(j)
+      groupedKeys(i) = word(j)
+      residuals(i) = MathUtils.subtract(data(j), centroids(a))
+      if (prev != a) {
+        offsetsBldr += i
+        prev = a
+      }
+      i += 1
+    }
+    Grouped(groupedKeys,
+            Matrix(size, dimension, residuals),
+            centroids,
+            offsetsBldr.result())
+  }
+
+  def indexed: WordVectors.Sorted = this match {
+    case indexed @ Sorted(_, _) =>
       indexed
+    case _ =>
+      val indices = Array.range(0, size).sortBy(word(_))
+      val sortedKeys = indices.map(word(_))
+      val sortedData = indices.map(apply(_))
+      Sorted(sortedKeys, Matrix(size, dimension, sortedData))
   }
 }
 
 object WordVectors {
   case class Unindexed(
     keys: Vector[String],
-    vectors: Matrix
+    toMatrix: Matrix
   ) extends WordVectors {
+    def dimension: Int = toMatrix.cols
+    def size: Int = toMatrix.rows
     def word(i: Int): String = keys(i)
+    def apply(i: Int): Array[Float] = toMatrix.data(i)
   }
 
-  case class Indexed(
-    keys: KeyIndex,
-    vectors: Matrix
+  case class Sorted(
+    keys: Array[String],
+    toMatrix: Matrix
   ) extends WordVectors {
+    def dimension: Int = toMatrix.cols
+    def size: Int = toMatrix.rows
+    val keyIndex: KeyIndex.Sorted =
+      KeyIndex.Sorted(keys)
     def word(i: Int): String = keys(i)
+    def apply(i: Int): Array[Float] = toMatrix.data(i)
+  }
+
+  case class Grouped(
+    keys: Array[String],
+    residuals: Matrix,
+    centroids: Array[Array[Float]],
+    offsets: Array[Int]
+  ) extends WordVectors {
+    def dimension: Int = residuals.cols
+    def size: Int = residuals.rows
+    val keyIndex: KeyIndex.Grouped =
+      KeyIndex.Grouped(keys, offsets)
+    def word(i: Int): String = keys(i)
+    def apply(i: Int): Array[Float] = {
+      val r = residuals.data(i)
+      val k0 = Arrays.binarySearch(offsets, i)
+      val k = if (k0 < 0) -k0 - 1 else (k0 + 1)
+      MathUtils.add(r, centroids(k))
+    }
+    def toMatrix: Matrix =
+      Matrix(size, dimension, Array.tabulate(size)(apply(_)))
   }
 
   private def readHeader(reader: Reader): (Int, Int) = {

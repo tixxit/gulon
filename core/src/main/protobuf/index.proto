@@ -24,10 +24,6 @@ message ProductQuantizer {
     }
 }
 
-message SortedWordList {
-    repeated string words = 1 [(scalapb.field).collection_type="Array"];
-}
-
 message EncodedMatrix {
     required int32 code_width = 1;
     required int32 length = 2;
@@ -39,12 +35,27 @@ message PQIndex {
     required EncodedMatrix data = 2;
 }
 
-message Index {
-    oneof key_index {
-    	SortedWordList simple_key_index = 1;
-    }
+message SortedIndex {
+    repeated string sorted_words = 1 [(scalapb.field).collection_type="Array"];
+    required PQIndex vector_index = 2;
+}
 
-    oneof vector_index {
-    	PQIndex product_quantizer_index = 2;
+message GroupedIndex {
+    repeated string grouped_words = 1 [(scalapb.field).collection_type="Array"];
+    required PQIndex residual_index = 2;
+    repeated FloatVector centroids = 3;
+    repeated int32 offsets = 4 [(scalapb.field).collection_type="Array"];
+    enum Strategy {
+        LIMIT_GROUPS = 0;
+        LIMIT_VECTORS = 2;
+    }
+    required Strategy strategy = 5;
+    required int32 limit = 6;
+}
+
+message Index {
+    oneof implementation {
+    	SortedIndex sorted = 1;
+	GroupedIndex grouped = 2;
     }
 }

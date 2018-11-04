@@ -41,7 +41,7 @@ object Query {
       for {
         vecs <- WordVectors.readWord2VecFile(options.query.toFile)
         index <- Index.read(CommandUtils.openPath(options.index))
-        results = index.batchQuery(options.k, vecs.vectors)
+        results = index.batchQuery(options.k, vecs.toMatrix)
         _ <- printResults(vecs.keys.zip(results))
       } yield ExitCode(0)
     }
