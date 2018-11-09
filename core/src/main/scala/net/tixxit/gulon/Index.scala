@@ -96,11 +96,12 @@ object Index {
    * @param quantizer product quantizer to encode vectors with
    */
   def sorted(wordVectors: WordVectors.Sorted,
-             quantizer: ProductQuantizer)(implicit
+             quantizer: ProductQuantizer,
+             metric: Metric)(implicit
              contextShift: ContextShift[IO]): IO[Index] =
     quantizer.encode(wordVectors.toMatrix)
       .map { encodedData =>
-        SortedIndex(KeyIndex.Sorted(wordVectors.keys), PQIndex(quantizer, encodedData))
+        SortedIndex(KeyIndex.Sorted(wordVectors.keys), PQIndex(quantizer, encodedData), metric)
       }
 
   /**
@@ -122,12 +123,14 @@ object Index {
    */
   def grouped(wordVectors: WordVectors.Grouped,
               residualsQuantizer: ProductQuantizer,
+              metric: Metric,
               strategy: GroupedIndex.Strategy)(implicit
               contextShift: ContextShift[IO]): IO[Index] =
     residualsQuantizer.encode(wordVectors.residuals)
       .map { encodedResiduals =>
         GroupedIndex(wordVectors.keyIndex,
                      PQIndex(residualsQuantizer, encodedResiduals),
+                     metric,
                      wordVectors.centroids,
                      wordVectors.offsets,
                      strategy)
@@ -139,11 +142,12 @@ object Index {
 
   def toProtobuf(index: Index): protobuf.Index =
     index match {
-      case SortedIndex(keyIndex, vecIndex) =>
-        val index = protobuf.SortedIndex(keyIndex.keys, PQIndex.toProtobuf(vecIndex))
+      case SortedIndex(keyIndex, vecIndex, metric) =>
+        val index = protobuf.SortedIndex(
+          keyIndex.keys, PQIndex.toProtobuf(vecIndex), Metric.toProtobuf(metric))
         protobuf.Index(protobuf.Index.Implementation.Sorted(index))
 
-      case GroupedIndex(keyIndex, vecIndex, centroids, offsets, groupedStrategy) =>
+      case GroupedIndex(keyIndex, vecIndex, metric, centroids, offsets, groupedStrategy) =>
         val (strategy, limit) = groupedStrategy match {
           case GroupedIndex.Strategy.LimitGroups(n) =>
             (protobuf.GroupedIndex.Strategy.LIMIT_GROUPS, n)
@@ -153,6 +157,7 @@ object Index {
         val index = protobuf.GroupedIndex(
           keyIndex.keys,
           PQIndex.toProtobuf(vecIndex),
+          Metric.toProtobuf(metric),
           centroids.map(protobuf.FloatVector(_)),
           offsets,
           strategy,
@@ -165,12 +170,12 @@ object Index {
       case protobuf.Index.Implementation.Sorted(index) =>
         val keyIndex = KeyIndex.Sorted(index.sortedWords)
         val vecIndex = PQIndex.fromProtobuf(index.vectorIndex)
-        SortedIndex(keyIndex, vecIndex)
+        SortedIndex(keyIndex, vecIndex, Metric.fromProtobuf(index.metric))
 
       case protobuf.Index.Implementation.Grouped(index) =>
         val keyIndex = KeyIndex.Grouped(
           index.groupedWords, index.offsets)
-        val vecIndex = PQIndex.fromProtobuf(index.residualIndex)
+        val vecIndex = PQIndex.fromProtobuf(index.vectorIndex)
         val centroids = index.centroids.iterator.map(_.values).toArray
         val strategy = index.strategy match {
           case protobuf.GroupedIndex.Strategy.LIMIT_GROUPS =>
@@ -184,6 +189,7 @@ object Index {
         GroupedIndex(
           keyIndex,
           vecIndex,
+          Metric.fromProtobuf(index.metric),
           centroids,
           index.offsets,
           strategy)
@@ -195,12 +201,11 @@ object Index {
 
   case class GroupedIndex(keyIndex: KeyIndex.Grouped,
                           vectorIndex: PQIndex,
+                          metric: Metric,
                           centroids: Array[Array[Float]],
                           offsets: Array[Int],
                           strategy: GroupedIndex.Strategy) extends Index {
     import GroupedIndex.Strategy
-
-    private[this] val kmeans: KMeans = KMeans(vectorIndex.dimension, centroids)
 
     def lookup(word: String): Option[Array[Float]] =
       keyIndex.lookup(word).map(vectorIndex.decode(_))
@@ -216,6 +221,15 @@ object Index {
       (start, end)
     }
 
+    private def prepareQuery(query: Array[Float], group: Int): Array[Float] = {
+      val normalized = if (metric.normalized) MathUtils.normalize(query) else query
+      if (metric.quantizedResiduals) {
+        MathUtils.subtract(normalized, centroids(group))
+      } else {
+        normalized
+      }
+    }
+
     def query(k: Int, query: Array[Float]): Index.Result = {
       val nn = searchSpace(query)
       val heap = TopKHeap(k)
@@ -223,7 +237,7 @@ object Index {
       while (i < nn.length) {
         val c = nn(i)
         val (from, until) = getBounds(c)
-        val query0 = MathUtils.subtract(query, centroids(c))
+        val query0 = prepareQuery(query, c)
         heap.merge(vectorIndex.query(k, query0, from, until))
         i += 1
       }
@@ -271,7 +285,8 @@ object Index {
   }
 
   case class SortedIndex(keyIndex: KeyIndex.Sorted,
-                         vectorIndex: PQIndex) extends Index {
+                         vectorIndex: PQIndex,
+                         metric: Metric) extends Index {
 
     def lookup(word: String): Option[Array[Float]] =
       keyIndex.lookup(word).map(vectorIndex.decode(_))
@@ -279,9 +294,18 @@ object Index {
     def query(k: Int, vector: Array[Float]): Index.Result =
       batchQuery(k, Matrix(1, vector.length, Array(vector)))(0)
 
+    private def prepare(query: Matrix): Matrix =
+      if (metric.normalized) {
+        Matrix(query.rows, query.cols, query.data.map { xs =>
+          MathUtils.normalize(xs)
+        })
+      } else {
+        query
+      }
+
     def batchQuery(k: Int, vectors: Matrix): Vector[Index.Result] =
       vectorIndex
-        .batchQuery(k, vectors)
+        .batchQuery(k, prepare(vectors))
         .map(Result.fromHeap(keyIndex, _))
   }
 
@@ -369,9 +393,8 @@ object Index {
       val preparedQuery = prepareQuery(productQuantizer, vectors.data).quantizerDistances
       val heaps = Vector.fill(preparedQuery.length)(TopKHeap(k))
       var i = from
-      val len = until - from
-      while (i < len) {
-        val batchSize = math.min(4096, len - i)
+      while (i < until) {
+        val batchSize = math.min(4096, until - i)
         var k = 0
         while (k < heaps.size) {
           // ds has all the distances for query q.

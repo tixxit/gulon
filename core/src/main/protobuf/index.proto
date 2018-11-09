@@ -30,6 +30,11 @@ message EncodedMatrix {
     repeated bytes encodings = 3;
 }
 
+enum Metric {
+    L2 = 0;
+    COSINE = 1;
+}
+
 message PQIndex {
     required ProductQuantizer product_quantizer = 1;
     required EncodedMatrix data = 2;
@@ -38,19 +43,21 @@ message PQIndex {
 message SortedIndex {
     repeated string sorted_words = 1 [(scalapb.field).collection_type="Array"];
     required PQIndex vector_index = 2;
+    required Metric metric = 3;
 }
 
 message GroupedIndex {
     repeated string grouped_words = 1 [(scalapb.field).collection_type="Array"];
-    required PQIndex residual_index = 2;
-    repeated FloatVector centroids = 3;
-    repeated int32 offsets = 4 [(scalapb.field).collection_type="Array"];
+    required PQIndex vector_index = 2;
+    required Metric metric = 3;
+    repeated FloatVector centroids = 4;
+    repeated int32 offsets = 5 [(scalapb.field).collection_type="Array"];
     enum Strategy {
         LIMIT_GROUPS = 0;
         LIMIT_VECTORS = 2;
     }
-    required Strategy strategy = 5;
-    required int32 limit = 6;
+    required Strategy strategy = 6;
+    required int32 limit = 7;
 }
 
 message Index {

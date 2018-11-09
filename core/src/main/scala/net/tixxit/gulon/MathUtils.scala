@@ -84,7 +84,28 @@ object MathUtils {
     sumSq
   }
 
-  final def distance(x: Array[Float], y: Array[Float]): Float = {
+  final def distance(x: Array[Float], y: Array[Float]): Float =
     math.sqrt(distanceSq(x, y)).toFloat
+
+  final def distance(xs: Array[Float]): Float = {
+    var sum = 0f
+    var i = 0
+    while (i < xs.length) {
+      val x = xs(i)
+      sum += x * x
+      i += 1
+    }
+    math.sqrt(sum).toFloat
+  }
+
+  final def normalize(xs: Array[Float]): Array[Float] = {
+    val d = distance(xs)
+    val ys = new Array[Float](xs.length)
+    var i = 0
+    while (i < xs.length) {
+      ys(i) = xs(i) / d
+      i += 1
+    }
+    ys
   }
 }

@@ -6,7 +6,7 @@ import java.util.Arrays
 import scala.collection.mutable.{ArrayBuffer, ArrayBuilder}
 
 import cats.Monad
-import cats.effect.IO
+import cats.effect.{ContextShift, IO}
 import cats.implicits._
 
 sealed trait WordVectors {
@@ -20,34 +20,33 @@ sealed trait WordVectors {
   def size: Int
   def dimension: Int
 
-  def grouped(clustering: KMeans): WordVectors.Grouped = {
-    val vecs = toMatrix
-    val assignments = clustering.assign(Vectors(vecs))
-    val indices = Array.range(0, size)
-      .sortBy(word(_))
-      .sortBy(assignments(_))
-    val groupedKeys = new Array[String](indices.length)
-    val residuals = new Array[Array[Float]](indices.length)
-    val offsetsBldr = ArrayBuilder.make[Int]()
-    var i = 0
-    var prev = 0
-    val data = vecs.data
-    val centroids = clustering.centroids
-    while (i < indices.length) {
-      val j = indices(i)
-      val a = assignments(j)
-      groupedKeys(i) = word(j)
-      residuals(i) = MathUtils.subtract(data(j), centroids(a))
-      if (prev != a) {
-        offsetsBldr += i
-        prev = a
+  def grouped(clustering: KMeans)(implicit contextShift: ContextShift[IO]): IO[WordVectors.Grouped] = {
+    clustering.parAssign(Vectors(toMatrix)).map { assignments =>
+      val indices = Array.range(0, size)
+        .sortBy(word(_))
+        .sortBy(assignments(_))
+      val groupedKeys = new Array[String](indices.length)
+      val groupedVecs = new Array[Array[Float]](indices.length)
+      val offsetsBldr = ArrayBuilder.make[Int]()
+      var i = 0
+      var prev = 0
+      val centroids = clustering.centroids
+      while (i < indices.length) {
+        val j = indices(i)
+        val a = assignments(j)
+        groupedKeys(i) = word(j)
+        groupedVecs(i) = apply(j)
+        if (prev != a) {
+          offsetsBldr += i
+          prev = a
+        }
+        i += 1
       }
-      i += 1
+      Grouped(groupedKeys,
+              Matrix(size, dimension, groupedVecs),
+              centroids,
+              offsetsBldr.result())
     }
-    Grouped(groupedKeys,
-            Matrix(size, dimension, residuals),
-            centroids,
-            offsetsBldr.result())
   }
 
   def indexed: WordVectors.Sorted = this match {
@@ -86,23 +85,36 @@ object WordVectors {
 
   case class Grouped(
     keys: Array[String],
-    residuals: Matrix,
+    toMatrix: Matrix,
     centroids: Array[Array[Float]],
     offsets: Array[Int]
   ) extends WordVectors {
-    def dimension: Int = residuals.cols
-    def size: Int = residuals.rows
+    def dimension: Int = toMatrix.cols
+    def size: Int = toMatrix.rows
     val keyIndex: KeyIndex.Grouped =
       KeyIndex.Grouped(keys, offsets)
     def word(i: Int): String = keys(i)
-    def apply(i: Int): Array[Float] = {
-      val r = residuals.data(i)
+    def apply(i: Int): Array[Float] = toMatrix.data(i)
+    def clusterOf(i: Int): Int = {
       val k0 = Arrays.binarySearch(offsets, i)
-      val k = if (k0 < 0) -k0 - 1 else (k0 + 1)
-      MathUtils.add(r, centroids(k))
+      if (k0 < 0) -k0 - 1 else (k0 + 1)
     }
-    def toMatrix: Matrix =
-      Matrix(size, dimension, Array.tabulate(size)(apply(_)))
+    def residuals: Matrix = {
+      val residuals = new Array[Array[Float]](size)
+      val data = toMatrix.data
+      var i = 0
+      var k = -1
+      var nextOffset = 0
+      while (i < residuals.length) {
+        while (i >= nextOffset) {
+          k += 1
+          nextOffset = if (k < offsets.length) offsets(k) else residuals.length
+        }
+        residuals(i) = MathUtils.subtract(data(i), centroids(k))
+        i += 1
+      }
+      Matrix(size, dimension, residuals)
+    }
   }
 
   private def readHeader(reader: Reader): (Int, Int) = {
@@ -162,17 +174,28 @@ object WordVectors {
 
   private[this] val chunkSize: Int = 10000
 
-  def readWord2Vec(reader: Reader, report: Reporter = emptyReporter): IO[Unindexed] =
+  def readWord2Vec(reader: Reader,
+                   normalize: Boolean = false,
+                   report: Reporter = emptyReporter): IO[Unindexed] =
     IO.suspend {
       val vecs = new ArrayBuffer[Array[Float]]()
       val words = Vector.newBuilder[String]
 
       var chars: Long = 0
-      val addLine: (String, Array[Float]) => Unit = { (word, vec) =>
-        chars += word.length
-        words += word
-        vecs += vec
-      }
+      val addLine: (String, Array[Float]) => Unit =
+        if (normalize) {
+          { (word, vec) =>
+            chars += word.length
+            words += word
+            vecs += vec
+          }
+        } else {
+          { (word, vec) =>
+            chars += word.length
+            words += word
+            vecs += vec
+          }
+        }
       val (size, dimension) = readHeader(reader)
 
       def readChunk(len: Int): IO[Int] = IO.delay {
@@ -198,28 +221,14 @@ object WordVectors {
       }
     }
 
-  def readWord2VecFile(file: File, report: Reporter = emptyReporter): IO[Unindexed] =
+  def readWord2VecFile(file: File,
+                       normalize: Boolean = false,
+                       report: Reporter = emptyReporter): IO[Unindexed] =
     IO.delay(new BufferedReader(new FileReader(file)))
-      .bracket(readWord2Vec(_, report))(reader => IO.delay(reader.close()))
+      .bracket(readWord2Vec(_, normalize, report))(reader => IO.delay(reader.close()))
 
-  def readWord2VecPath(path: String, report: Reporter = emptyReporter): IO[Unindexed] =
-    readWord2VecFile(new File(path), report)
-
-  // Goa: 50MB ann for 1M word vectors - 50 bytes!
-
-  // Step 1:
-  //  Make a compressed index -> String lookup.
-  //   - build(TraversableOnce[CharSequence]) -> StringIndex
-  //   - unsafeLookup(index, buf): Unit
-  //   - Store trie with bonsai + String
-  //   - Lookup: rank(id), traverse upwards, append char if
-
-  // Idea?
-  //  - use 64-bit hash to do word -> code lookups
-  //  - store words in a trie structure
-  //  - match codes with index into tail of trie structure
-  //  - reconstruct words to present results
-  //  - can use left-child right-sibling binary tree encoding + bonsai
-  // Size?
-  //  - N * (8 + 4 + m) + ???
+  def readWord2VecPath(path: String,
+                       normalize: Boolean = false,
+                       report: Reporter = emptyReporter): IO[Unindexed] =
+    readWord2VecFile(new File(path), normalize, report)
 }

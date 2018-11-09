@@ -45,7 +45,7 @@ final class TopKHeap(
     var i = 0
     val ks = that.keys
     val vs = that.values
-    val len = ks.length
+    val len = that.size
     while (i < len) {
       update(ks(i), vs(i))
       i += 1

@@ -21,6 +21,52 @@ final class KMeans private (
     assignments
   }
 
+  private def assign(vecs: Vectors,
+                     assignments: Array[Int],
+                     start: Int,
+                     end: Int): Unit = {
+    val rng = new Random(0)
+    val from = vecs.from
+    val until = vecs.until
+    val data = vecs.data
+    var i = start
+    while (i < end) {
+      val row = data(i)
+      var k = 0
+      var min = Float.MaxValue
+      while (k < centroids.length) {
+        val c = centroids(k)
+        var j = 0
+        var d = 0f
+        val len = c.length
+        while (j < len) {
+          d += row(j + from) * c(j)
+          j += 1
+        }
+        d = offsets(k) - 2 * d
+        if (d < min || (d == min && rng.nextBoolean())) {
+          assignments(i) = k
+          min = d
+        }
+        k += 1
+      }
+      i += 1
+    }
+  }
+
+  def parAssign(vecs: Vectors)(implicit contextShift: ContextShift[IO]): IO[Array[Int]] = {
+    val batchSize = 25000
+    val assignments = new Array[Int](vecs.size)
+    List.range(0, assignments.length, batchSize)
+      .parTraverse { from =>
+        val until = math.min(assignments.length, from + batchSize)
+        IO.shift.map { _ =>
+          assign(vecs, assignments, from, until)
+        }
+      }
+      .as(assignments)
+  }
+
   def assign(vecs: Vectors, assignments: Array[Int]): Unit = {
     val rng = new Random(0)
     val from = vecs.from
@@ -82,7 +128,7 @@ object KMeans {
         for {
           _ <- IO.shift
           init <- IO.delay(KMeans.init(config.numClusters, vecs, config.seed))
-          assignments = init.assign(vecs)
+          assignments <- init.parAssign(vecs)
           report = ProgressReport(0, config.maxIterations, SummaryStats.zero, false)
           _ <- config.report(report)
         } yield Left(Some((init, assignments, 0)))
@@ -90,7 +136,7 @@ object KMeans {
         for {
           _ <- IO.shift
           next <- IO.delay(KMeans.fromAssignment(config.numClusters, vecs.dimension, vecs, prevAssignments))
-          assignments = next.assign(vecs)
+          assignments <- next.parAssign(vecs)
           converged = Arrays.equals(prevAssignments, assignments)
           report = ProgressReport(i, config.maxIterations, stepSize(prev.centroids, next.centroids), converged)
           _ <- config.report(report)
