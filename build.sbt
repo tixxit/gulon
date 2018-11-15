@@ -1,6 +1,10 @@
-scalaVersion := "2.12.7"
+organization in ThisBuild := "net.tixxit"
+name in ThisBuild := "gulon"
 
-name := "gulon"
+scalaVersion in ThisBuild := "2.12.7"
+crossScalaVersions in ThisBuild := Seq("2.11.12", "2.12.7")
+
+scalacOptions in ThisBuild ++= Seq("-deprecation", "-feature", "-unchecked", "-language:higherKinds")
 
 val catsEffectVersion = "1.0.0"
 val declineVersion = "0.5.0"
