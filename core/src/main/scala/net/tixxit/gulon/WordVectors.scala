@@ -2,6 +2,7 @@ package net.tixxit.gulon
 
 import java.io.{BufferedReader, File, FileReader, Reader}
 import java.lang.Float.parseFloat
+import java.lang.ref.WeakReference
 import java.util.Arrays
 import scala.collection.mutable.{ArrayBuffer, ArrayBuilder}
 
@@ -99,21 +100,30 @@ object WordVectors {
       val k0 = Arrays.binarySearch(offsets, i)
       if (k0 < 0) -k0 - 1 else (k0 + 1)
     }
-    def residuals: Matrix = {
-      val residuals = new Array[Array[Float]](size)
-      val data = toMatrix.data
-      var i = 0
-      var k = -1
-      var nextOffset = 0
-      while (i < residuals.length) {
-        while (i >= nextOffset) {
-          k += 1
-          nextOffset = if (k < offsets.length) offsets(k) else residuals.length
+
+    private[this] var residualsRef: WeakReference[Matrix] =
+      new WeakReference(null)
+
+    def residuals: Matrix = synchronized {
+      var ret = residualsRef.get
+      if (ret == null) {
+        val residuals = new Array[Array[Float]](size)
+        val data = toMatrix.data
+        var i = 0
+        var k = -1
+        var nextOffset = 0
+        while (i < residuals.length) {
+          while (i >= nextOffset) {
+            k += 1
+            nextOffset = if (k < offsets.length) offsets(k) else residuals.length
+          }
+          residuals(i) = MathUtils.subtract(data(i), centroids(k))
+          i += 1
         }
-        residuals(i) = MathUtils.subtract(data(i), centroids(k))
-        i += 1
+        ret = Matrix(size, dimension, residuals)
+        residualsRef = new WeakReference(ret)
       }
-      Matrix(size, dimension, residuals)
+      ret
     }
   }
 
@@ -187,7 +197,7 @@ object WordVectors {
           { (word, vec) =>
             chars += word.length
             words += word
-            vecs += vec
+            vecs += MathUtils.normalize(vec)
           }
         } else {
           { (word, vec) =>

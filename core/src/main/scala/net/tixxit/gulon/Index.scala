@@ -223,11 +223,7 @@ object Index {
 
     private def prepareQuery(query: Array[Float], group: Int): Array[Float] = {
       val normalized = if (metric.normalized) MathUtils.normalize(query) else query
-      if (metric.quantizedResiduals) {
-        MathUtils.subtract(normalized, centroids(group))
-      } else {
-        normalized
-      }
+      MathUtils.subtract(normalized, centroids(group))
     }
 
     def query(k: Int, query: Array[Float]): Index.Result = {
@@ -262,7 +258,7 @@ object Index {
       val heap = TopKHeap(k)
       var i = 0
       val dim = query.length
-      while (i < query.length) {
+      while (i < vectors.length) {
         heap.update(i, MathUtils.distanceSq(vectors(i), query))
         i += 1
       }

@@ -1,13 +1,12 @@
 package net.tixxit.gulon
 
 sealed abstract class Metric(
-  val quantizedResiduals: Boolean,
   val normalized: Boolean
 ) extends Product with Serializable
 
 object Metric {
-  final case object L2 extends Metric(true, false)
-  final case object Cosine extends Metric(false, true)
+  final case object L2 extends Metric(false)
+  final case object Cosine extends Metric(true)
 
   final def fromProtobuf(m: protobuf.Metric): Metric =
     m match {

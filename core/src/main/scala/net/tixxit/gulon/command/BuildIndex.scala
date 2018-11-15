@@ -92,7 +92,7 @@ object BuildIndex {
     _ <- IO.delay(println("\nRe-indexing word vectors"))
     grouped <- vecs.grouped(clustering)
     _ <- IO.delay(println("\nComputing product quantizer"))
-    vectors = if (metric.quantizedResiduals) grouped.residuals else grouped.toMatrix
+    vectors = grouped.residuals
     quantizer <- ProductQuantizer(vectors, pqConfig)
     _ <- IO.delay(println(s"Building index for ${grouped.size} vectors"))
     index <- Index.grouped(grouped, quantizer, metric, strategy)
