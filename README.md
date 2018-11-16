@@ -5,6 +5,7 @@
 
 Build and query small approximate nearest neighbour (ANN) indices on the JVM.
 
-This focuses on building small ANN indices that can be loaded into memory from
-large word or other entity embeddings. It is designed to work with O(10m)
-vectors and return queries in 5ms or less on modern hardware.
+This focuses on building _small_ ANN indices of large word (or other entity)
+embeddings that can be loaded into memory. It is designed to work with O(10m)
+vectors with tens, hundreds or thousands of dimensions and return queries in
+5ms or less on modern hardware with sane defaults.
