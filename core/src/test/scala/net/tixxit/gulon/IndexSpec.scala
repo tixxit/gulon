@@ -25,14 +25,24 @@ class IndexSpec extends FunSuite with PropertyChecks {
     k <- Gen.choose(1, sortedIndex.size)
   } yield SortedIndexWithQuery(sortedIndex, query, k)
 
+  def assertResultsMatch(actual: Seq[(String, Float)], expected: Seq[String]): Unit = {
+    val secondaryOrder: Map[String, Int] = expected.zipWithIndex.toMap
+    val reordered = actual
+      .sortBy { case (word, distSq) =>
+        (distSq, secondaryOrder.getOrElse(word, 0))
+      }
+      .map(_._1)
+    assert(reordered == expected)
+  }
+
   test("SortedIndex should query encoded nearest neighbours") {
     forAll(genSortedIndexWithQuery) { case SortedIndexWithQuery(index, p, k) =>
-      println(s"d=${index.dimension}, p=${p.length} k=$k")
       val result = index.query(k, p)
       val decoded = index.keyIndex.keys.map { w => index.lookup(w).get }
-      val indices = Index.exactNearestNeighbours(decoded, p, k)
+      val p0 = if (index.metric.normalized) MathUtils.normalize(p) else p
+      val indices = Index.exactNearestNeighbours(decoded, p0, k)
       val expected = indices.map(index.keyIndex(_)).toList
-      assert(result.map(_._1).toList == expected)
+      assertResultsMatch(result, expected)
     }
   }
 }

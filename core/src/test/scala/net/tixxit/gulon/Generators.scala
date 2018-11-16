@@ -72,7 +72,7 @@ object Generators {
     // Dimension of the quantizers.
     quantizerDimension <- Gen.choose(1, 4)//16)
     // Number of clusters per quantizer.
-    numClusters <- Gen.choose(1, 4)//1 << 16)
+    numClusters <- Gen.choose(1, 100)//1 << 16)
     quantizers0 <- Gen.nonEmptyListOf(genKMeans(quantizerDimension, numClusters))
   } yield {
     val quantizers = quantizers0.zipWithIndex

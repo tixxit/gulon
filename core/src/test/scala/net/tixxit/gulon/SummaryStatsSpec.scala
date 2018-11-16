@@ -5,6 +5,8 @@ import org.scalatest.prop.PropertyChecks
 import org.scalacheck.{Arbitrary, Gen}
 
 class SummaryStatsSpec extends FunSuite with PropertyChecks {
+  import TestUtils.nearlyEqual
+
   val genSummaryStats: Gen[SummaryStats] = for {
     values <- Gen.listOf(Gen.choose(-1e4f, 1e4f))
   } yield SummaryStats(values)
@@ -12,10 +14,6 @@ class SummaryStatsSpec extends FunSuite with PropertyChecks {
   implicit val arbSummaryStats: Arbitrary[SummaryStats] =
     Arbitrary(genSummaryStats)
 
-  private def nearlyEqual(x: Float, y: Float, eps: Float = 0.0001f): Boolean = {
-    val err = eps * math.max(math.abs(x), math.abs(y))
-    ((x - err) <= y) && ((x + err) >= y)
-  }
 
   test("associative") {
     forAll { (x: SummaryStats, y: SummaryStats, z: SummaryStats) =>

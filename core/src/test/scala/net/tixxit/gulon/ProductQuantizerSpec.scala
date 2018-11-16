@@ -24,7 +24,7 @@ class ProductQuantizerSpec extends FunSuite with PropertyChecks {
         } yield (expected, actual)
 
         val (expected, actual) = io.unsafeRunSync
-        assert(Vectors(actual) == Vectors(expected))
+        assert(TestUtils.nearlyEqualMatrices(expected, actual))
     }
   }
 
