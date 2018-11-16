@@ -10,54 +10,7 @@ import org.scalacheck.{Arbitrary, Gen}
 import org.scalacheck.Arbitrary.arbitrary
 
 class ProductQuantizerSpec extends FunSuite with PropertyChecks {
-  def genPoint(dim: Int): Gen[Array[Float]] =
-    Gen.listOfN(dim, Gen.choose(-1f, 1f)).map(_.toArray)
-
-  def genKMeans(dimension: Int, k: Int): Gen[KMeans] = for {
-    centroids <- Gen.listOfN(k, genPoint(dimension))
-  } yield KMeans(dimension, centroids.toArray)
-
-  def genProductQuantizer: Gen[ProductQuantizer] = for {
-    // Number of quantizers
-    numQuantizers <- Gen.sized(n => Gen.choose(1, math.max(1, n)))
-    // Dimension of the quantizers.
-    quantizerDimension <- Gen.choose(1, 4)//16)
-    // Number of clusters per quantizer.
-    numClusters <- Gen.choose(1, 4)//1 << 16)
-    quantizers0 <- Gen.nonEmptyListOf(genKMeans(quantizerDimension, numClusters))
-  } yield {
-    val quantizers = quantizers0.zipWithIndex
-      .map { case (kmeans, i) =>
-        ProductQuantizer.Quantizer(i * quantizerDimension, kmeans)
-      }
-    ProductQuantizer(numClusters, quantizers.toVector)
-  }
-
-  def genMatrix(dimension: Int): Gen[Matrix] =
-    Gen.nonEmptyListOf(genPoint(dimension))
-      .map { points =>
-        Matrix(points.size, dimension, points.toArray)
-      }
-
-  val genProductQuantizerWithMatrix: Gen[(ProductQuantizer, Matrix)] =
-    for {
-      pq <- genProductQuantizer
-      m <- genMatrix(pq.dimension)
-    } yield (pq, m)
-
-  def genEncodings(pq: ProductQuantizer): Gen[EncodedMatrix] =
-    Gen.sized { n =>
-      Gen.choose(1, math.max(1, n)).flatMap { len =>
-        val coder = pq.coderFactory(len)
-        val genQuantizerCode: Gen[coder.Code] =
-          Gen.listOfN(len, Gen.choose(0, pq.numClusters - 1))
-            .map { indices => coder.buildCode(indices.toArray) }
-        Gen.listOfN(pq.quantizers.size, genQuantizerCode)
-          .map { codes =>
-            EncodedMatrix(coder)(codes.toVector)
-          }
-      }
-    }
+  import Generators._
 
   implicit val contextShift: ContextShift[IO] =
     IO.contextShift(scala.concurrent.ExecutionContext.Implicits.global)

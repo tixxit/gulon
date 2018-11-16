@@ -10,6 +10,12 @@ import cats.effect.{ContextShift, IO}
  */
 sealed trait Index {
 
+  /** The dimension of the index and query vectors. */
+  def dimension: Int
+
+  /** The number of vectors in this index. */
+  def size: Int
+
   /**
    * Return the approximate `k` nearest neighbours to each query
    * point in `vectors`.
@@ -199,6 +205,34 @@ object Index {
           "missing index implementation")
     }
 
+  def exactNearestNeighbours(vectors: Array[Array[Float]],
+                             from: Int, until: Int,
+                             query: Array[Float],
+                             k: Int): Array[Int] = {
+    require(from <= until, s"invalid range: expected from=$from <= until=$until")
+    require(until <= vectors.length, s"invalid range: expected until=$until <= vectors.length=${vectors.length}")
+
+    val heap = TopKHeap(k)
+    var i = from
+    val dim = query.length
+    while (i < until) {
+      heap.update(i, MathUtils.distanceSq(vectors(i), query))
+      i += 1
+    }
+    val result = new Array[Int](k)
+    var j = result.length - 1
+    while (j >= 0) {
+      result(j) = heap.delete()
+      j -= 1
+    }
+    result
+  }
+
+  def exactNearestNeighbours(vectors: Array[Array[Float]],
+                             query: Array[Float],
+                             k: Int): Array[Int] =
+    exactNearestNeighbours(vectors, 0, vectors.length, query, k)
+
   case class GroupedIndex(keyIndex: KeyIndex.Grouped,
                           vectorIndex: PQIndex,
                           metric: Metric,
@@ -206,6 +240,9 @@ object Index {
                           offsets: Array[Int],
                           strategy: GroupedIndex.Strategy) extends Index {
     import GroupedIndex.Strategy
+
+    def dimension: Int = vectorIndex.dimension
+    def size: Int = keyIndex.size
 
     def lookup(word: String): Option[Array[Float]] =
       keyIndex.lookup(word).map(vectorIndex.decode(_))
@@ -242,9 +279,9 @@ object Index {
 
     private def searchSpace(query: Array[Float]): Array[Int] =
       strategy match {
-        case Strategy.LimitGroups(m) => nearestNeighbours(centroids, query, m)
+        case Strategy.LimitGroups(m) => exactNearestNeighbours(centroids, query, m)
         case Strategy.LimitVectors(n) =>
-          val order = nearestNeighbours(centroids, query, centroids.length)
+          val order = exactNearestNeighbours(centroids, query, centroids.length)
           var i = 0
           var count = 0
           while (i < order.length && count < n) {
@@ -253,23 +290,6 @@ object Index {
           }
           Arrays.copyOf(order, i)
       }
-
-    private def nearestNeighbours(vectors: Array[Array[Float]], query: Array[Float], k: Int): Array[Int] = {
-      val heap = TopKHeap(k)
-      var i = 0
-      val dim = query.length
-      while (i < vectors.length) {
-        heap.update(i, MathUtils.distanceSq(vectors(i), query))
-        i += 1
-      }
-      val result = new Array[Int](k)
-      var j = result.length - 1
-      while (j >= 0) {
-        result(j) = heap.delete()
-        j -= 1
-      }
-      result
-    }
   }
 
   object GroupedIndex {
@@ -283,6 +303,9 @@ object Index {
   case class SortedIndex(keyIndex: KeyIndex.Sorted,
                          vectorIndex: PQIndex,
                          metric: Metric) extends Index {
+
+    def dimension: Int = vectorIndex.dimension
+    def size: Int = keyIndex.size
 
     def lookup(word: String): Option[Array[Float]] =
       keyIndex.lookup(word).map(vectorIndex.decode(_))
