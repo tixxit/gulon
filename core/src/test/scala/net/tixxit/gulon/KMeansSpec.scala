@@ -46,9 +46,11 @@ class KMeansSpec extends FunSuite with PropertyChecks {
     clusters: Array[Array[Float]])
 
   val genVectors: Gen[GeneratedVectors] = for {
-    k <- Gen.choose(2, 100)
-    d <- Gen.choose(2, 100)
-    clusters <- Gen.listOfN(k, genCluster(d, Gen.choose(-5f, 5f)))
+    k <- Gen.choose(2, 15)
+    d <- Gen.choose(2, 30)
+    sz <- Gen.size
+    clusterSize = math.max(sz / k, 5)
+    clusters <- Gen.listOfN(k, Gen.resize(clusterSize, genCluster(d, Gen.choose(-5f, 5f))))
     groupedVectors <- Gen.sequence[List[Matrix], Matrix](clusters.map(sampleCluster(_)))
   } yield {
     val points = groupedVectors.toArray
@@ -118,7 +120,12 @@ class KMeansSpec extends FunSuite with PropertyChecks {
       val assignments = new Array[Int](vectors.size)
       val k0 = KMeans.fromAssignment(clusters.length, vectors.dimension, vectors, assignments)
       val k1 = k0.iterate(vectors, 1)
-      assert(objective(vectors, k0) > objective(vectors, k1))
+      val assignments1 = k1.assign(vectors)
+      if (assignments.toVector == assignments1.toVector) {
+        succeed
+      } else {
+        assert(objective(vectors, k0) > objective(vectors, k1))
+      }
     }
   }
 }

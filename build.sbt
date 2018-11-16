@@ -15,7 +15,8 @@ val commonSettings = Seq(
   libraryDependencies ++= Seq(
     "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
     "org.scalacheck" %% "scalacheck" % scalaCheckVersion % "test"
-  )
+  ),
+  parallelExecution in Test := false
 )
 
 lazy val root = (project in file("."))
