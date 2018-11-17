@@ -12,9 +12,6 @@ import org.scalacheck.Arbitrary.arbitrary
 class ProductQuantizerSpec extends FunSuite with PropertyChecks {
   import Generators._
 
-  implicit val contextShift: ContextShift[IO] =
-    IO.contextShift(scala.concurrent.ExecutionContext.Implicits.global)
-
   test("(decode ∘ encode) is idempotent") {
     forAll(genProductQuantizerWithMatrix) {
       case (pq, m) =>

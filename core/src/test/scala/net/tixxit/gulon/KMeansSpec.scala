@@ -20,9 +20,6 @@ class KMeansSpec extends FunSuite with PropertyChecks {
       .sum
   }
 
-  implicit val contextShift: ContextShift[IO] =
-    IO.contextShift(scala.concurrent.ExecutionContext.Implicits.global)
-
   test("computeClusters converges") {
     forAll(genVectors) { case GeneratedVectors(vectors, clusters) =>
       val k0 = KMeans.init(clusters.size, vectors)

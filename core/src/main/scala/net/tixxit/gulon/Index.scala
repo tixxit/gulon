@@ -107,7 +107,7 @@ object Index {
   def sorted(wordVectors: WordVectors.Sorted,
              quantizer: ProductQuantizer,
              metric: Metric)(implicit
-             contextShift: ContextShift[IO]): IO[Index] =
+             contextShift: ContextShift[IO]): IO[Index.SortedIndex] =
     quantizer.encode(wordVectors.toMatrix)
       .map { encodedData =>
         SortedIndex(KeyIndex.Sorted(wordVectors.keys), PQIndex(quantizer, encodedData), metric)
@@ -134,7 +134,7 @@ object Index {
               residualsQuantizer: ProductQuantizer,
               metric: Metric,
               strategy: GroupedIndex.Strategy)(implicit
-              contextShift: ContextShift[IO]): IO[Index] =
+              contextShift: ContextShift[IO]): IO[Index.GroupedIndex] =
     residualsQuantizer.encode(wordVectors.residuals)
       .map { encodedResiduals =>
         GroupedIndex(wordVectors.keyIndex,
@@ -220,7 +220,7 @@ object Index {
       heap.update(i, MathUtils.distanceSq(vectors(i), query))
       i += 1
     }
-    val result = new Array[Int](k)
+    val result = new Array[Int](heap.size)
     var j = result.length - 1
     while (j >= 0) {
       result(j) = heap.delete()
@@ -243,6 +243,9 @@ object Index {
 
     private[this] val offsets = keyIndex.groupOffsets
     private[this] val centroids = clustering.centroids
+
+    assert(centroids.length == offsets.length + 1,
+           s"${centroids.length} != ${offsets.length} + 1")
 
     def dimension: Int = vectorIndex.dimension
     def size: Int = keyIndex.size
@@ -267,20 +270,19 @@ object Index {
       (start, end)
     }
 
-    private def prepareQuery(query: Array[Float], group: Int): Array[Float] = {
-      val normalized = if (metric.normalized) MathUtils.normalize(query) else query
-      MathUtils.subtract(normalized, centroids(group))
-    }
-
     def query(k: Int, query: Array[Float]): Index.Result = {
-      val nn = searchSpace(query)
+      val normalizedQuery =
+        if (metric.normalized) MathUtils.normalize(query)
+        else query
+      val nn = searchSpace(normalizedQuery)
       val heap = TopKHeap(k)
       var i = 0
       while (i < nn.length) {
         val c = nn(i)
         val (from, until) = getBounds(c)
-        val query0 = prepareQuery(query, c)
-        heap.merge(vectorIndex.query(k, query0, from, until))
+        val centroid = centroids(c)
+        val residual = MathUtils.subtract(normalizedQuery, centroid)
+        heap.merge(vectorIndex.query(k, residual, from, until))
         i += 1
       }
       Result.fromHeap(keyIndex, heap)
@@ -288,13 +290,15 @@ object Index {
 
     private def searchSpace(query: Array[Float]): Array[Int] =
       strategy match {
-        case Strategy.LimitGroups(m) => exactNearestNeighbours(centroids, query, m)
+        case Strategy.LimitGroups(m) =>
+          exactNearestNeighbours(centroids, query, m)
         case Strategy.LimitVectors(n) =>
           val order = exactNearestNeighbours(centroids, query, centroids.length)
           var i = 0
           var count = 0
           while (i < order.length && count < n) {
-            count += order(i)
+            val (from, until) = getBounds(order(i))
+            count += until - from
             i += 1
           }
           Arrays.copyOf(order, i)

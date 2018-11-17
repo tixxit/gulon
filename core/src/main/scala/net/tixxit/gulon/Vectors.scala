@@ -67,7 +67,6 @@ final case class Vectors(matrix: Matrix, from: Int, until: Int) {
         var j = 0
         while (j < cols) {
           if (lrow(j + lOffset) != rrow(j + rOffset)) {
-            println(s"row=$i, col=$j: ${lrow(j + lOffset)} != ${rrow(j + rOffset)}")
             return false
           }
           j += 1

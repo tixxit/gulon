@@ -2,10 +2,14 @@ package net.tixxit.gulon
 
 import scala.util.Random
 
+import cats.effect.{ContextShift, IO}
 import org.scalacheck.{Arbitrary, Gen}
 import org.scalacheck.Arbitrary.arbitrary
 
 object Generators {
+  implicit val contextShift: ContextShift[IO] =
+    IO.contextShift(scala.concurrent.ExecutionContext.Implicits.global)
+
   case class Cluster(
     centroid: Array[Float],
     scales: Array[Float])
@@ -39,9 +43,11 @@ object Generators {
     vectors: Vectors,
     clusters: Array[Array[Float]])
 
-  val genVectors: Gen[GeneratedVectors] = for {
+  val genVectors: Gen[GeneratedVectors] =
+    Gen.choose(2, 30).flatMap(genVectorsOfN(_))
+
+  def genVectorsOfN(d: Int): Gen[GeneratedVectors] = for {
     k <- Gen.choose(2, 15)
-    d <- Gen.choose(2, 30)
     sz <- Gen.size
     clusterSize = math.max(sz / k, 5)
     clusters <- Gen.listOfN(k, Gen.resize(clusterSize, genCluster(d, Gen.choose(-5f, 5f))))
@@ -72,7 +78,7 @@ object Generators {
     // Dimension of the quantizers.
     quantizerDimension <- Gen.choose(1, 4)//16)
     // Number of clusters per quantizer.
-    numClusters <- Gen.choose(1, 100)//1 << 16)
+    numClusters <- Gen.choose(1, 100)
     quantizers0 <- Gen.nonEmptyListOf(genKMeans(quantizerDimension, numClusters))
   } yield {
     val quantizers = quantizers0.zipWithIndex
@@ -113,18 +119,38 @@ object Generators {
     em <- genEncodings(pq)
   } yield Index.PQIndex(pq, em)
 
+  private def genSetOfN[A](n: Int, gen: Gen[A]): Gen[Set[A]] = {
+    def loop(acc: Set[A]): Gen[Set[A]] =
+      if (acc.size == n) Gen.const(acc)
+      else gen.flatMap { a => loop(acc + a) }
+
+    loop(Set.empty)
+  }
+
   def genSortedKeyIndexOfN(n: Int): Gen[KeyIndex.Sorted] =
-    Gen.containerOfN[Set, String](n, Gen.identifier).map { keys =>
+    genSetOfN[String](n, Gen.identifier).map { keys =>
       KeyIndex.Sorted(keys.toList.sorted.toArray)
     }
 
   def genMetric: Gen[Metric] = Gen.oneOf(Metric.L2, Metric.Cosine)
 
+  def normalize(metric: Metric, data: Array[Array[Float]]): Array[Array[Float]] =
+    if (metric.normalized) data.map(MathUtils.normalize(_))
+    else data
+
+  def makeWordVectors(metric: Metric, keys: Array[String], matrix: Matrix): WordVectors.Sorted = {
+    val Matrix(rows, cols, data) = matrix
+    WordVectors.Sorted(keys, Matrix(rows, cols, normalize(metric, data)))
+  }
+
   def genSortedIndex: Gen[Index.SortedIndex] = for {
-    pqIndex <- genPQIndex
-    keyIndex <- genSortedKeyIndexOfN(pqIndex.data.length)
     metric <- genMetric
-  } yield Index.SortedIndex(keyIndex, pqIndex, metric)
+    pq <- genProductQuantizer
+    vectors <- genMatrix(pq.dimension)
+    if vectors.rows > 0
+    keyIndex <- genSortedKeyIndexOfN(vectors.rows)
+    wordVectors = makeWordVectors(metric, keyIndex.keys, vectors)
+  } yield Index.sorted(wordVectors, pq, metric).unsafeRunSync()
 
   def genGroupedKeyIndexOfN(n: Int): Gen[KeyIndex.Grouped] = for {
     keys <- Gen.containerOfN[Set, String](n, Gen.identifier).map(_.toVector)
@@ -143,20 +169,22 @@ object Generators {
 
   def genGroupedIndexStrategy(size: Int, partitions: Int): Gen[Index.GroupedIndex.Strategy] =
     Gen.oneOf(
-      Gen.choose(1, math.max(1, partitions)).map(Index.GroupedIndex.Strategy.LimitGroups(_)),
-      Gen.choose(1, math.max(1, size)).map(Index.GroupedIndex.Strategy.LimitVectors(_)))
+      Gen.choose(2, math.max(2, partitions)).map(Index.GroupedIndex.Strategy.LimitGroups(_)),
+      Gen.choose(2, math.max(2, size)).map(Index.GroupedIndex.Strategy.LimitVectors(_)))
 
   def genGroupedIndex: Gen[Index.GroupedIndex] = for {
-    pqIndex <- genPQIndex
-    keyIndex <- genGroupedKeyIndexOfN(pqIndex.data.length)
     metric <- genMetric
-    centroids <- Gen.listOfN(keyIndex.groupOffsets.length + 1, genPoint(pqIndex.dimension))
-    strategy <- genGroupedIndexStrategy(pqIndex.length, keyIndex.groupOffsets.length)
-  } yield Index.GroupedIndex(keyIndex,
-                             pqIndex,
-                             metric,
-                             Clustering(centroids.toArray),
-                             strategy)
+    pq <- genProductQuantizer
+    GeneratedVectors(vectors, clusters) <- genVectorsOfN(pq.dimension)
+    keyIndex <- genSortedKeyIndexOfN(vectors.size)
+    wordVectors0 = makeWordVectors(metric, keyIndex.keys, vectors.matrix)
+    kmeans = KMeans(vectors.dimension, normalize(metric, clusters))
+    wordVectors = wordVectors0.grouped(kmeans).unsafeRunSync()
+    strategy <- genGroupedIndexStrategy(vectors.size, wordVectors.keyIndex.groupOffsets.length)
+  } yield Index.grouped(wordVectors,
+                        pq,
+                        metric,
+                        strategy).unsafeRunSync()
 
   def genIndex: Gen[Index] =
     Gen.oneOf(genSortedIndex, genGroupedIndex)

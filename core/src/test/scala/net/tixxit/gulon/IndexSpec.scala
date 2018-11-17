@@ -59,7 +59,7 @@ class IndexSpec extends FunSuite with PropertyChecks {
       .map(_._2.length)
       .max
 
-  test("queryByWord find word") {
+  test("queryByWord finds word") {
     forAll(genIndexWithWord) { case IndexWithWord(index, word) =>
       // If there are duplicates, then it is possible that
       val k = countDuplicates(index) + 1 // +1 to deal with FP quirkiness.
