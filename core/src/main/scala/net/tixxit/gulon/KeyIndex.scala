@@ -20,6 +20,11 @@ object KeyIndex {
       if (i >= 0) Some(i)
       else None
     }
+    override def equals(that: Any): Boolean = that match {
+      case (that: Sorted) => ArrayUtils.shallowEquals(keys, that.keys)
+      case _ => false
+    }
+    override def hashCode: Int = (getClass, ArrayUtils.shallowHashCode(keys)).hashCode
   }
 
   case class Grouped(
@@ -46,5 +51,13 @@ object KeyIndex {
       }
       None
     }
+    override def equals(that: Any): Boolean = that match {
+      case (that: Grouped) =>
+        ArrayUtils.shallowEquals(keys, that.keys) &&
+          Arrays.equals(groupOffsets, that.groupOffsets)
+      case _ => false
+    }
+    override def hashCode: Int =
+      (getClass, ArrayUtils.shallowHashCode(keys), Arrays.hashCode(groupOffsets)).hashCode
   }
 }

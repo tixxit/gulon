@@ -9,10 +9,6 @@ import org.scalacheck.Arbitrary.arbitrary
 
 class IndexSpec extends FunSuite with PropertyChecks {
   import Generators._
-  // Make a product quantizer from a bunch of KMeans.
-  // Generate some encoded vectors.
-  // Compare results against decoded nearest neighbours.
-  //
 
   case class SortedIndexWithQuery(
     index: Index.SortedIndex,
@@ -43,6 +39,13 @@ class IndexSpec extends FunSuite with PropertyChecks {
       val indices = Index.exactNearestNeighbours(decoded, p0, k)
       val expected = indices.map(index.keyIndex(_)).toList
       assertResultsMatch(result, expected)
+    }
+  }
+
+  test("protobuf round-trips") {
+    forAll(genIndex) { index =>
+      val result = Index.fromProtobuf(Index.toProtobuf(index))
+      assert(result == index)
     }
   }
 }

@@ -137,8 +137,7 @@ object Index {
         GroupedIndex(wordVectors.keyIndex,
                      PQIndex(residualsQuantizer, encodedResiduals),
                      metric,
-                     wordVectors.centroids,
-                     wordVectors.offsets,
+                     Clustering(wordVectors.centroids),
                      strategy)
       }
 
@@ -153,7 +152,7 @@ object Index {
           keyIndex.keys, PQIndex.toProtobuf(vecIndex), Metric.toProtobuf(metric))
         protobuf.Index(protobuf.Index.Implementation.Sorted(index))
 
-      case GroupedIndex(keyIndex, vecIndex, metric, centroids, offsets, groupedStrategy) =>
+      case GroupedIndex(keyIndex, vecIndex, metric, Clustering(centroids), groupedStrategy) =>
         val (strategy, limit) = groupedStrategy match {
           case GroupedIndex.Strategy.LimitGroups(n) =>
             (protobuf.GroupedIndex.Strategy.LIMIT_GROUPS, n)
@@ -165,7 +164,7 @@ object Index {
           PQIndex.toProtobuf(vecIndex),
           Metric.toProtobuf(metric),
           centroids.map(protobuf.FloatVector(_)),
-          offsets,
+          keyIndex.groupOffsets,
           strategy,
           limit)
         protobuf.Index(protobuf.Index.Implementation.Grouped(index))
@@ -196,8 +195,7 @@ object Index {
           keyIndex,
           vecIndex,
           Metric.fromProtobuf(index.metric),
-          centroids,
-          index.offsets,
+          Clustering(centroids),
           strategy)
 
       case protobuf.Index.Implementation.Empty =>
@@ -236,10 +234,12 @@ object Index {
   case class GroupedIndex(keyIndex: KeyIndex.Grouped,
                           vectorIndex: PQIndex,
                           metric: Metric,
-                          centroids: Array[Array[Float]],
-                          offsets: Array[Int],
+                          clustering: Clustering,
                           strategy: GroupedIndex.Strategy) extends Index {
     import GroupedIndex.Strategy
+
+    private[this] val offsets = keyIndex.groupOffsets
+    private[this] val centroids = clustering.centroids
 
     def dimension: Int = vectorIndex.dimension
     def size: Int = keyIndex.size
@@ -305,6 +305,7 @@ object Index {
                          metric: Metric) extends Index {
 
     def dimension: Int = vectorIndex.dimension
+
     def size: Int = keyIndex.size
 
     def lookup(word: String): Option[Array[Float]] =

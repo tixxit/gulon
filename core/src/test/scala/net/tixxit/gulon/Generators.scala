@@ -125,4 +125,39 @@ object Generators {
     keyIndex <- genSortedKeyIndexOfN(pqIndex.data.length)
     metric <- genMetric
   } yield Index.SortedIndex(keyIndex, pqIndex, metric)
+
+  def genGroupedKeyIndexOfN(n: Int): Gen[KeyIndex.Grouped] = for {
+    keys <- Gen.containerOfN[Set, String](n, Gen.identifier).map(_.toVector)
+    offsets <- if (keys.length < 2) Gen.const(Set.empty[Int])
+               else Gen.containerOf[Set, Int](Gen.choose(1, keys.length - 1))
+  } yield {
+    val orderedOffsets = offsets.toList.sorted
+    val orderedKeys = (0 +: orderedOffsets :+ keys.length)
+      .sliding(2)
+      .flatMap { case from :: until :: Nil =>
+        (from until until).map(keys(_)).sorted
+      }
+      .toArray
+    KeyIndex.Grouped(orderedKeys, orderedOffsets.toArray)
+  }
+
+  def genGroupedIndexStrategy(size: Int, partitions: Int): Gen[Index.GroupedIndex.Strategy] =
+    Gen.oneOf(
+      Gen.choose(1, math.max(1, partitions)).map(Index.GroupedIndex.Strategy.LimitGroups(_)),
+      Gen.choose(1, math.max(1, size)).map(Index.GroupedIndex.Strategy.LimitVectors(_)))
+
+  def genGroupedIndex: Gen[Index.GroupedIndex] = for {
+    pqIndex <- genPQIndex
+    keyIndex <- genGroupedKeyIndexOfN(pqIndex.data.length)
+    metric <- genMetric
+    centroids <- Gen.listOfN(keyIndex.groupOffsets.length, genPoint(pqIndex.dimension))
+    strategy <- genGroupedIndexStrategy(pqIndex.length, keyIndex.groupOffsets.length)
+  } yield Index.GroupedIndex(keyIndex,
+                             pqIndex,
+                             metric,
+                             Clustering(centroids.toArray),
+                             strategy)
+
+  def genIndex: Gen[Index] =
+    Gen.oneOf(genSortedIndex, genGroupedIndex)
 }
