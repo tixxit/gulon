@@ -1,7 +1,5 @@
 package net.tixxit.gulon
 
-import scala.util.Random
-
 import cats.effect.{ContextShift, IO}
 import cats.effect.concurrent.Ref
 import org.scalatest.FunSuite
@@ -10,60 +8,7 @@ import org.scalacheck.{Arbitrary, Gen}
 import org.scalacheck.Arbitrary.arbitrary
 
 class KMeansSpec extends FunSuite with PropertyChecks {
-  // Average distance should shrink w/ each iteration.
-
-  case class Cluster(
-    centroid: Array[Float],
-    scales: Array[Float])
-
-  // Generate a cluster.
-  def genCluster(d: Int, x: Gen[Float]): Gen[Cluster]  = for {
-    centroid <- Gen.listOfN(d, x).map(_.toArray)
-    scales <- Gen.listOfN(d, x).map(_.toArray)
-  } yield Cluster(centroid, scales)
-
-  def genPoint(cluster: Cluster): Gen[Array[Float]] = {
-    val gens = cluster.centroid
-      .zip(cluster.scales)
-      .map { case (x, k) =>
-        arbitrary[Int].map { seed =>
-          val rng = new Random(seed)
-          val d = rng.nextGaussian()
-          (x + d * k).toFloat
-        }
-      }
-    Gen.sequence[Array[Float], Float](gens)
-  }
-
-  def sampleCluster(cluster: Cluster): Gen[Matrix] =
-    Gen.nonEmptyListOf(genPoint(cluster)).map(_.toArray)
-      .map { data =>
-        Matrix(data.length, data(0).length, data)
-      }
-
-  case class GeneratedVectors(
-    vectors: Vectors,
-    clusters: Array[Array[Float]])
-
-  val genVectors: Gen[GeneratedVectors] = for {
-    k <- Gen.choose(2, 15)
-    d <- Gen.choose(2, 30)
-    sz <- Gen.size
-    clusterSize = math.max(sz / k, 5)
-    clusters <- Gen.listOfN(k, Gen.resize(clusterSize, genCluster(d, Gen.choose(-5f, 5f))))
-    groupedVectors <- Gen.sequence[List[Matrix], Matrix](clusters.map(sampleCluster(_)))
-  } yield {
-    val points = groupedVectors.toArray
-      .flatMap(_.data)
-    val vectors = Vectors(Matrix(points.length, points(0).length, points))
-    GeneratedVectors(vectors, clusters.map(_.centroid).toArray)
-  }
-
-  implicit val arbGeneratedVectors: Arbitrary[GeneratedVectors] =
-    Arbitrary(genVectors)
-
-  implicit val arbVectors: Arbitrary[Vectors] =
-    Arbitrary(genVectors.map(_.vectors))
+  import Generators._
 
   def objective(vecs: Vectors, kmeans: KMeans): Float = {
     val assignments = new Array[Int](vecs.size)
@@ -74,9 +19,6 @@ class KMeansSpec extends FunSuite with PropertyChecks {
       .map { case (x, y) => MathUtils.distanceSq(x, y) }
       .sum
   }
-
-  implicit val contextShift: ContextShift[IO] =
-    IO.contextShift(scala.concurrent.ExecutionContext.Implicits.global)
 
   test("computeClusters converges") {
     forAll(genVectors) { case GeneratedVectors(vectors, clusters) =>

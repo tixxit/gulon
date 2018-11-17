@@ -10,6 +10,15 @@ import cats.effect.{ContextShift, IO}
  */
 sealed trait Index {
 
+  /** The indexed keys. */
+  def keyIndex: KeyIndex
+
+  /** The dimension of the index and query vectors. */
+  def dimension: Int
+
+  /** The number of vectors in this index. */
+  def size: Int
+
   /**
    * Return the approximate `k` nearest neighbours to each query
    * point in `vectors`.
@@ -98,7 +107,7 @@ object Index {
   def sorted(wordVectors: WordVectors.Sorted,
              quantizer: ProductQuantizer,
              metric: Metric)(implicit
-             contextShift: ContextShift[IO]): IO[Index] =
+             contextShift: ContextShift[IO]): IO[Index.SortedIndex] =
     quantizer.encode(wordVectors.toMatrix)
       .map { encodedData =>
         SortedIndex(KeyIndex.Sorted(wordVectors.keys), PQIndex(quantizer, encodedData), metric)
@@ -125,14 +134,13 @@ object Index {
               residualsQuantizer: ProductQuantizer,
               metric: Metric,
               strategy: GroupedIndex.Strategy)(implicit
-              contextShift: ContextShift[IO]): IO[Index] =
+              contextShift: ContextShift[IO]): IO[Index.GroupedIndex] =
     residualsQuantizer.encode(wordVectors.residuals)
       .map { encodedResiduals =>
         GroupedIndex(wordVectors.keyIndex,
                      PQIndex(residualsQuantizer, encodedResiduals),
                      metric,
-                     wordVectors.centroids,
-                     wordVectors.offsets,
+                     Clustering(wordVectors.centroids),
                      strategy)
       }
 
@@ -147,7 +155,7 @@ object Index {
           keyIndex.keys, PQIndex.toProtobuf(vecIndex), Metric.toProtobuf(metric))
         protobuf.Index(protobuf.Index.Implementation.Sorted(index))
 
-      case GroupedIndex(keyIndex, vecIndex, metric, centroids, offsets, groupedStrategy) =>
+      case GroupedIndex(keyIndex, vecIndex, metric, Clustering(centroids), groupedStrategy) =>
         val (strategy, limit) = groupedStrategy match {
           case GroupedIndex.Strategy.LimitGroups(n) =>
             (protobuf.GroupedIndex.Strategy.LIMIT_GROUPS, n)
@@ -159,7 +167,7 @@ object Index {
           PQIndex.toProtobuf(vecIndex),
           Metric.toProtobuf(metric),
           centroids.map(protobuf.FloatVector(_)),
-          offsets,
+          keyIndex.groupOffsets,
           strategy,
           limit)
         protobuf.Index(protobuf.Index.Implementation.Grouped(index))
@@ -190,8 +198,7 @@ object Index {
           keyIndex,
           vecIndex,
           Metric.fromProtobuf(index.metric),
-          centroids,
-          index.offsets,
+          Clustering(centroids),
           strategy)
 
       case protobuf.Index.Implementation.Empty =>
@@ -199,16 +206,58 @@ object Index {
           "missing index implementation")
     }
 
+  def exactNearestNeighbours(vectors: Array[Array[Float]],
+                             from: Int, until: Int,
+                             query: Array[Float],
+                             k: Int): Array[Int] = {
+    require(from <= until, s"invalid range: expected from=$from <= until=$until")
+    require(until <= vectors.length, s"invalid range: expected until=$until <= vectors.length=${vectors.length}")
+
+    val heap = TopKHeap(k)
+    var i = from
+    val dim = query.length
+    while (i < until) {
+      heap.update(i, MathUtils.distanceSq(vectors(i), query))
+      i += 1
+    }
+    val result = new Array[Int](heap.size)
+    var j = result.length - 1
+    while (j >= 0) {
+      result(j) = heap.delete()
+      j -= 1
+    }
+    result
+  }
+
+  def exactNearestNeighbours(vectors: Array[Array[Float]],
+                             query: Array[Float],
+                             k: Int): Array[Int] =
+    exactNearestNeighbours(vectors, 0, vectors.length, query, k)
+
   case class GroupedIndex(keyIndex: KeyIndex.Grouped,
                           vectorIndex: PQIndex,
                           metric: Metric,
-                          centroids: Array[Array[Float]],
-                          offsets: Array[Int],
+                          clustering: Clustering,
                           strategy: GroupedIndex.Strategy) extends Index {
     import GroupedIndex.Strategy
 
+    private[this] val offsets = keyIndex.groupOffsets
+    private[this] val centroids = clustering.centroids
+
+    assert(centroids.length == offsets.length + 1,
+           s"${centroids.length} != ${offsets.length} + 1")
+
+    def dimension: Int = vectorIndex.dimension
+    def size: Int = keyIndex.size
+
     def lookup(word: String): Option[Array[Float]] =
-      keyIndex.lookup(word).map(vectorIndex.decode(_))
+      keyIndex.lookup(word).map { row =>
+        val i = Arrays.binarySearch(offsets, row)
+        val partition = if (i < 0) -i - 1 else i + 1
+        val base = centroids(partition)
+        val residual = vectorIndex.decode(row)
+        MathUtils.add(base, residual)
+      }
 
     def batchQuery(k: Int, vectors: Matrix): Vector[Index.Result] =
       vectors.data.iterator
@@ -221,20 +270,19 @@ object Index {
       (start, end)
     }
 
-    private def prepareQuery(query: Array[Float], group: Int): Array[Float] = {
-      val normalized = if (metric.normalized) MathUtils.normalize(query) else query
-      MathUtils.subtract(normalized, centroids(group))
-    }
-
     def query(k: Int, query: Array[Float]): Index.Result = {
-      val nn = searchSpace(query)
+      val normalizedQuery =
+        if (metric.normalized) MathUtils.normalize(query)
+        else query
+      val nn = searchSpace(normalizedQuery)
       val heap = TopKHeap(k)
       var i = 0
       while (i < nn.length) {
         val c = nn(i)
         val (from, until) = getBounds(c)
-        val query0 = prepareQuery(query, c)
-        heap.merge(vectorIndex.query(k, query0, from, until))
+        val centroid = centroids(c)
+        val residual = MathUtils.subtract(normalizedQuery, centroid)
+        heap.merge(vectorIndex.query(k, residual, from, until))
         i += 1
       }
       Result.fromHeap(keyIndex, heap)
@@ -242,34 +290,19 @@ object Index {
 
     private def searchSpace(query: Array[Float]): Array[Int] =
       strategy match {
-        case Strategy.LimitGroups(m) => nearestNeighbours(centroids, query, m)
+        case Strategy.LimitGroups(m) =>
+          exactNearestNeighbours(centroids, query, m)
         case Strategy.LimitVectors(n) =>
-          val order = nearestNeighbours(centroids, query, centroids.length)
+          val order = exactNearestNeighbours(centroids, query, centroids.length)
           var i = 0
           var count = 0
           while (i < order.length && count < n) {
-            count += order(i)
+            val (from, until) = getBounds(order(i))
+            count += until - from
             i += 1
           }
           Arrays.copyOf(order, i)
       }
-
-    private def nearestNeighbours(vectors: Array[Array[Float]], query: Array[Float], k: Int): Array[Int] = {
-      val heap = TopKHeap(k)
-      var i = 0
-      val dim = query.length
-      while (i < vectors.length) {
-        heap.update(i, MathUtils.distanceSq(vectors(i), query))
-        i += 1
-      }
-      val result = new Array[Int](k)
-      var j = result.length - 1
-      while (j >= 0) {
-        result(j) = heap.delete()
-        j -= 1
-      }
-      result
-    }
   }
 
   object GroupedIndex {
@@ -283,6 +316,10 @@ object Index {
   case class SortedIndex(keyIndex: KeyIndex.Sorted,
                          vectorIndex: PQIndex,
                          metric: Metric) extends Index {
+
+    def dimension: Int = vectorIndex.dimension
+
+    def size: Int = keyIndex.size
 
     def lookup(word: String): Option[Array[Float]] =
       keyIndex.lookup(word).map(vectorIndex.decode(_))

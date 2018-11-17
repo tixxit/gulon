@@ -104,6 +104,15 @@ final class KMeans private (
       KMeans.fromAssignment(centroids.length, dimension, vecs, assignments)
     }
   }
+
+  override def hashCode: Int =
+    (getClass, dimension, ArrayUtils.deepHashCode(centroids)).hashCode
+
+  override def equals(that: Any): Boolean = that match {
+    case (that: KMeans) if k == that.k =>
+      dimension == that.dimension && ArrayUtils.deepEquals(centroids, that.centroids)
+    case _ => false
+  }
 }
 
 object KMeans {

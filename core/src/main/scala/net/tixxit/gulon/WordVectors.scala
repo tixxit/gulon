@@ -22,6 +22,8 @@ sealed trait WordVectors {
   def dimension: Int
 
   def grouped(clustering: KMeans)(implicit contextShift: ContextShift[IO]): IO[WordVectors.Grouped] = {
+    require(clustering.k > 0, "must have at least 1 cluster")
+
     clustering.parAssign(Vectors(toMatrix)).map { assignments =>
       val indices = Array.range(0, size)
         .sortBy(word(_))
@@ -29,23 +31,28 @@ sealed trait WordVectors {
       val groupedKeys = new Array[String](indices.length)
       val groupedVecs = new Array[Array[Float]](indices.length)
       val offsetsBldr = ArrayBuilder.make[Int]()
-      var i = 0
-      var prev = 0
-      val centroids = clustering.centroids
-      while (i < indices.length) {
-        val j = indices(i)
-        val a = assignments(j)
-        groupedKeys(i) = word(j)
-        groupedVecs(i) = apply(j)
-        if (prev != a) {
-          offsetsBldr += i
-          prev = a
+      // Not all centroids may have points assigned to them.
+      val centroidsBldr = ArrayBuilder.make[Array[Float]]()
+      if (indices.length > 0) {
+        var i = 0
+        var prev = assignments(0)
+        centroidsBldr += clustering.centroids(prev)
+        while (i < indices.length) {
+          val j = indices(i)
+          val a = assignments(j)
+          groupedKeys(i) = word(j)
+          groupedVecs(i) = apply(j)
+          if (prev != a) {
+            offsetsBldr += i
+            prev = a
+            centroidsBldr += clustering.centroids(prev)
+          }
+          i += 1
         }
-        i += 1
       }
       Grouped(groupedKeys,
               Matrix(size, dimension, groupedVecs),
-              centroids,
+              centroidsBldr.result(),
               offsetsBldr.result())
     }
   }

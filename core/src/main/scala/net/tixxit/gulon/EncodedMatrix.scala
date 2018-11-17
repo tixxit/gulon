@@ -1,5 +1,6 @@
 package net.tixxit.gulon
 
+import java.util.Arrays
 import com.google.protobuf.ByteString
 
 trait EncodedVector {
@@ -7,7 +8,7 @@ trait EncodedVector {
   def apply(i: Int): Int
 }
 
-sealed trait EncodedMatrix {
+sealed abstract class EncodedMatrix {
   val coder: Coder
   def encodings: Vector[coder.Code]
 
@@ -20,6 +21,17 @@ sealed trait EncodedMatrix {
 
   def unwrappedEncodings: Vector[Array[Byte]] =
     encodings.map(coder.unwrapCode(_))
+
+  override def hashCode: Int =
+    (classOf[EncodedMatrix], coder, unwrappedEncodings.map(Arrays.hashCode(_))).hashCode
+  override def equals(that: Any): Boolean = that match {
+    case (that: EncodedMatrix) =>
+      coder == that.coder &&
+        unwrappedEncodings.zip(that.unwrappedEncodings).forall {
+          case (x, y) => Arrays.equals(x, y)
+        }
+    case _ => false
+  }
 }
 
 object EncodedMatrix {
