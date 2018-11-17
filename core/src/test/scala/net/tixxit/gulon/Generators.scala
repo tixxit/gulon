@@ -150,7 +150,7 @@ object Generators {
     pqIndex <- genPQIndex
     keyIndex <- genGroupedKeyIndexOfN(pqIndex.data.length)
     metric <- genMetric
-    centroids <- Gen.listOfN(keyIndex.groupOffsets.length, genPoint(pqIndex.dimension))
+    centroids <- Gen.listOfN(keyIndex.groupOffsets.length + 1, genPoint(pqIndex.dimension))
     strategy <- genGroupedIndexStrategy(pqIndex.length, keyIndex.groupOffsets.length)
   } yield Index.GroupedIndex(keyIndex,
                              pqIndex,

@@ -10,6 +10,9 @@ import cats.effect.{ContextShift, IO}
  */
 sealed trait Index {
 
+  /** The indexed keys. */
+  def keyIndex: KeyIndex
+
   /** The dimension of the index and query vectors. */
   def dimension: Int
 
@@ -245,7 +248,13 @@ object Index {
     def size: Int = keyIndex.size
 
     def lookup(word: String): Option[Array[Float]] =
-      keyIndex.lookup(word).map(vectorIndex.decode(_))
+      keyIndex.lookup(word).map { row =>
+        val i = Arrays.binarySearch(offsets, row)
+        val partition = if (i < 0) -i - 1 else i + 1
+        val base = centroids(partition)
+        val residual = vectorIndex.decode(row)
+        MathUtils.add(base, residual)
+      }
 
     def batchQuery(k: Int, vectors: Matrix): Vector[Index.Result] =
       vectors.data.iterator

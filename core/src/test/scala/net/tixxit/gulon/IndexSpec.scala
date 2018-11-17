@@ -42,6 +42,36 @@ class IndexSpec extends FunSuite with PropertyChecks {
     }
   }
 
+  case class IndexWithWord(index: Index, word: String)
+
+  val genIndexWithWord = for {
+    index <- genIndex
+    if index.size > 0
+    i <- Gen.choose(0, index.size - 1)
+  } yield IndexWithWord(index, index.keyIndex(i))
+
+  def countDuplicates(index: Index): Int =
+    index.keyIndex
+      .map { word =>
+        index.lookup(word).get
+      }
+      .groupBy(_.toVector)
+      .map(_._2.length)
+      .max
+
+  test("queryByWord find word") {
+    forAll(genIndexWithWord) { case IndexWithWord(index, word) =>
+      // If there are duplicates, then it is possible that
+      val k = countDuplicates(index) + 1 // +1 to deal with FP quirkiness.
+      index.queryByWord(k, word) match {
+        case Some(result) =>
+          assert(result.map(_._1).contains(word))
+        case None =>
+          fail("word not found in index")
+      }
+    }
+  }
+
   test("protobuf round-trips") {
     forAll(genIndex) { index =>
       val result = Index.fromProtobuf(Index.toProtobuf(index))
