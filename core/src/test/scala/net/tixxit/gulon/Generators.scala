@@ -119,7 +119,7 @@ object Generators {
     em <- genEncodings(pq)
   } yield Index.PQIndex(pq, em)
 
-  private def genSetOfN[A](n: Int, gen: Gen[A]): Gen[Set[A]] = {
+  def genSetOfN[A](n: Int, gen: Gen[A]): Gen[Set[A]] = {
     def loop(acc: Set[A]): Gen[Set[A]] =
       if (acc.size == n) Gen.const(acc)
       else gen.flatMap { a => loop(acc + a) }

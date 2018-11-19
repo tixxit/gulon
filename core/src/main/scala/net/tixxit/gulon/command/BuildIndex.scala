@@ -103,11 +103,11 @@ object BuildIndex {
                        pqConfig: ProductQuantizer.Config)(implicit
                        contextShift: ContextShift[IO]): IO[Index] = for {
     _ <- IO.delay(println("\nRe-indexing word vectors"))
-    indexed = vecs.indexed
+    sorted = vecs.sorted
     _ <- IO.delay(println("\nComputing product quantizer"))
-    quantizer <- ProductQuantizer(indexed.toMatrix, pqConfig)
-    _ <- IO.delay(println(s"Building index for ${indexed.size} vectors"))
-    index <- Index.sorted(indexed, quantizer, metric)
+    quantizer <- ProductQuantizer(sorted.toMatrix, pqConfig)
+    _ <- IO.delay(println(s"Building index for ${sorted.size} vectors"))
+    index <- Index.sorted(sorted, quantizer, metric)
   } yield index
 
   def buildIndex(vecs: WordVectors,

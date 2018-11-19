@@ -57,7 +57,7 @@ sealed trait WordVectors {
     }
   }
 
-  def indexed: WordVectors.Sorted = this match {
+  def sorted: WordVectors.Sorted = this match {
     case indexed @ Sorted(_, _) =>
       indexed
     case _ =>
