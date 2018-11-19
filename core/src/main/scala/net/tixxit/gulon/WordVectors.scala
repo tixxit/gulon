@@ -79,10 +79,14 @@ object WordVectors {
     def apply(i: Int): Array[Float] = toMatrix.data(i)
   }
 
+  trait Indexed extends WordVectors {
+    val keyIndex: KeyIndex
+  }
+
   case class Sorted(
     keys: Array[String],
     toMatrix: Matrix
-  ) extends WordVectors {
+  ) extends Indexed {
     def dimension: Int = toMatrix.cols
     def size: Int = toMatrix.rows
     val keyIndex: KeyIndex.Sorted =
@@ -96,7 +100,7 @@ object WordVectors {
     toMatrix: Matrix,
     centroids: Array[Array[Float]],
     offsets: Array[Int]
-  ) extends WordVectors {
+  ) extends Indexed {
     def dimension: Int = toMatrix.cols
     def size: Int = toMatrix.rows
     val keyIndex: KeyIndex.Grouped =

@@ -77,6 +77,16 @@ final class TopKHeap(
       size += 1
     }
   }
+
+  def deleteAll(): Array[Int] = {
+    val result = new Array[Int](size)
+    var j = result.length - 1
+    while (j >= 0) {
+      result(j) = delete()
+      j -= 1
+    }
+    result
+  }
 }
 
 object TopKHeap {

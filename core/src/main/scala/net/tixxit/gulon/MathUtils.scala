@@ -22,6 +22,8 @@ case class SummaryStats(count: Int, mean: Float, s: Float) {
 }
 
 object SummaryStats {
+  def apply(x: Float): SummaryStats = SummaryStats(1, x, 0f)
+
   def apply(xs: TraversableOnce[Float]): SummaryStats = {
     val bldr = newBuilder()
     xs.foreach(bldr.update(_))

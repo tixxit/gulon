@@ -36,7 +36,7 @@ class IndexSpec extends FunSuite with PropertyChecks {
       val result = index.query(k, p)
       val decoded = index.keyIndex.keys.map { w => index.lookup(w).get }
       val p0 = if (index.metric.normalized) MathUtils.normalize(p) else p
-      val indices = Index.exactNearestNeighbours(decoded, p0, k)
+      val indices = Index.exactNearestNeighbours(decoded, p0, k).deleteAll()
       val expected = indices.map(index.keyIndex(_)).toList
       assertResultsMatch(result, expected)
     }
