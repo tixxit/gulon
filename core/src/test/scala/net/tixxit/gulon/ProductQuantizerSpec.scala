@@ -66,4 +66,40 @@ class ProductQuantizerSpec extends FunSuite with PropertyChecks {
       }
     }
   }
+
+  def quality(orig: Matrix, approx: Matrix): Float =
+    orig.data.zip(approx.data)
+      .map { case (x, y) => MathUtils.distanceSq(x, y) }
+      .sum
+
+  test("approximates input") {
+    val gen = for {
+      dim <- Gen.sized(n => Gen.choose(4, math.max(4, n)))
+      vectors <- genVectorsOfN(dim)
+    } yield vectors
+
+    forAll(gen) { case GeneratedVectors(vectors, clusters) =>
+      val config0 = ProductQuantizer.Config(
+        numClusters = clusters.length / 2,
+        numQuantizers = vectors.dimension / 4,
+        maxIterations = 10)
+      val pq0 = ProductQuantizer(vectors.matrix, config0).unsafeRunSync()
+      val approx0 = pq0.decode(pq0.encode(vectors.matrix).unsafeRunSync())
+      if (TestUtils.nearlyEqualMatrices(approx0, vectors.matrix, 0.01f)) {
+        // In this case, we can't really expect any improvement.
+        succeed
+      } else {
+        val config1 = ProductQuantizer.Config(
+          numClusters = clusters.length,
+          numQuantizers = vectors.dimension / 2,
+          maxIterations = 10)
+        val pq1 = ProductQuantizer(vectors.matrix, config1).unsafeRunSync()
+        val approx1 = pq1.decode(pq1.encode(vectors.matrix).unsafeRunSync())
+
+        val q0 = quality(vectors.matrix, approx0)
+        val q1 = quality(vectors.matrix, approx1)
+        assert(q1 < q0)
+      }
+    }
+  }
 }
