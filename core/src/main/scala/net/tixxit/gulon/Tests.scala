@@ -9,7 +9,8 @@ case class Tests(wordVectors: WordVectors.Indexed,
    * samples. The recall is returned as the summary stats, so that the variance
    * is available.
    */
-  def recallOf(index: Index): Map[Int, SummaryStats] =
+  def recallOf(index: Index,
+               eps: Float = 0f): Map[Int, SummaryStats] =
     queries.foldLeft(Map.empty[Int, SummaryStats]) {
       case (acc, Tests.Query(query, results)) =>
         val maxK = results.map(_.k).max
@@ -19,7 +20,10 @@ case class Tests(wordVectors: WordVectors.Indexed,
           MathUtils.distanceSq(query, wordVectors(i))
         }
         results.foldLeft(acc) { case (acc, Tests.QueryResult(k, maxDistanceSq)) =>
-          val tp = distances.take(k).count(_ <= maxDistanceSq)
+          val cutoff =
+            if (eps == 0f) maxDistanceSq
+            else math.pow(math.sqrt(maxDistanceSq) * (1f + eps), 2).toFloat
+          val tp = distances.take(k).count(_ <= cutoff)
           val pointStats = SummaryStats(tp.toFloat / k)
           val stats = acc.getOrElse(k, SummaryStats.zero) ++ pointStats
           acc + (k -> stats)

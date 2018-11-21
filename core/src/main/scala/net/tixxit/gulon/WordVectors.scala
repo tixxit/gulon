@@ -1,6 +1,6 @@
 package net.tixxit.gulon
 
-import java.io.{BufferedReader, File, FileReader, Reader}
+import java.io.{BufferedReader, File, FileReader, PushbackReader, Reader}
 import java.lang.Float.parseFloat
 import java.lang.ref.WeakReference
 import java.util.Arrays
@@ -138,51 +138,66 @@ object WordVectors {
     }
   }
 
-  private def readHeader(reader: Reader): (Int, Int) = {
+  val Word2VecHeader = """(\d+) (\d+)""".r
+
+  private def readDimension(reader: Reader): (Reader, Option[Int], Int) = {
     val bldr = new java.lang.StringBuilder()
     var c = reader.read()
     while (c != -1 && c != '\n') {
       bldr.append(c.toChar)
       c = reader.read()
     }
-    val line = bldr.toString
-    val Array(size, dim) = line.split(" ")
-    (size.toInt, dim.toInt)
+    bldr.toString match {
+      case Word2VecHeader(size, dim) =>
+        (reader, Some(size.toInt), dim.toInt)
+      case line =>
+        val Array(word, vec @ _*) = line.split(" ")
+        val pbReader = new PushbackReader(reader, line.length + 1)
+        pbReader.unread('\n')
+        pbReader.unread(line.toCharArray())
+        (pbReader, None, vec.length)
+    }
   }
 
   private def readFast(reader: Reader, dimension: Int)(f: (String, Array[Float]) => Unit): Boolean = {
     val bldr = new java.lang.StringBuilder()
     val vec = new Array[Float](dimension)
     var c = reader.read()
-    var i = 0
-    var k = 0
-    // a 0 1 2
-    while (c != -1 && c != '\n') {
-      bldr.append(c.toChar)
-      if (c == ' ') {
-        vec(k) = i
-        k += 1
+    if (c == -1) {
+      false
+    } else {
+      var i = 0
+      var k = 0
+      // a 0 1 2
+      while (c != -1 && c != '\n') {
+        bldr.append(c.toChar)
+        if (c == ' ') {
+          vec(k) = i
+          k += 1
+        }
+        c = reader.read()
+        i += 1
       }
-      c = reader.read()
-      i += 1
+      if (i > 0) {
+        val line = bldr.toString
+        val word = line.substring(0, vec(0).toInt)
+        i = 0
+        while (i < vec.length) {
+          val start = vec(i).toInt + 1
+          val scalar =
+            if ((i + 1) == vec.length) line.substring(start)
+            else line.substring(start, vec(i + 1).toInt)
+          vec(i) = parseFloat(scalar)
+          i += 1
+        }
+        f(word, vec)
+      }
+      true
     }
-    val line = bldr.toString
-    val word = line.substring(0, vec(0).toInt)
-    i = 0
-    while (i < vec.length) {
-      val start = vec(i).toInt + 1
-      val scalar =
-        if ((i + 1) == vec.length) line.substring(start)
-        else line.substring(start, vec(i + 1).toInt)
-      vec(i) = parseFloat(scalar)
-      i += 1
-    }
-    f(word, vec)
-    c != -1
   }
 
-  case class ProgressReport(dimension: Int, linesRead: Int, linesTotal: Int, charsPerWord: Float) {
-    def percentageRead: Float = linesRead.toFloat / linesTotal
+  case class ProgressReport(dimension: Int, linesRead: Int, linesTotal: Option[Int], charsPerWord: Float) {
+    def percentageRead: Option[Float] = linesTotal.map(linesRead.toFloat / _)
     def sizeEstimate: Long = {
       val words = (2 * charsPerWord * linesRead).toLong
       val vecs = (4 * dimension * linesRead).toLong
@@ -217,28 +232,27 @@ object WordVectors {
             vecs += vec
           }
         }
-      val (size, dimension) = readHeader(reader)
 
+      val (reader0, maybeSize, dimension) = readDimension(reader)
       def readChunk(len: Int): IO[Int] = IO.delay {
         var i = 0
-        while (i < len) {
-          readFast(reader, dimension)(addLine)
+        while (i < len && readFast(reader0, dimension)(addLine)) {
           i += 1
         }
-        len
+        i
       }
 
-      Monad[IO].tailRecM(0) {
-        case i if i < size =>
-          val len = math.min(size - i, chunkSize)
+      Monad[IO].tailRecM((false, 0)) {
+        case (false, i) =>
           for {
-            _ <- readChunk(len)
-            n = i + len
-            _ <- report(ProgressReport(dimension, n, size, chars.toFloat / n))
-          } yield Left(n)
-        case _ =>
-          report(ProgressReport(dimension, size, size, chars.toFloat / size))
-            .as(Right(Unindexed(words.result(), Matrix(size, dimension, vecs.toArray))))
+            nRead <- readChunk(chunkSize)
+            eof = nRead != chunkSize
+            n = i + nRead
+            _ <- report(ProgressReport(dimension, n, maybeSize, chars.toFloat / n))
+          } yield Left((eof, n))
+        case (true, n) =>
+          report(ProgressReport(dimension, n, Some(n), chars.toFloat / n))
+            .as(Right(Unindexed(words.result(), Matrix(n, dimension, vecs.toArray))))
       }
     }
 

@@ -15,6 +15,13 @@ object CommandUtils {
     else f"${bytes / 1000000000d}%.1fgb"
   }
 
+  final def maybeLogProgress(p: Option[Float], extra: String): IO[Unit] =
+    p match {
+      case Some(p) => logProgress(p, extra)
+      case None =>
+        IO.delay(print(s"[--------------------] ??.?% $extra\r"))
+    }
+
   // [###                 ] __._% $extra
   final def logProgress(p: Float, extra: String): IO[Unit] = IO.delay {
     val numHashes = (p * 20).toInt

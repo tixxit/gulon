@@ -11,7 +11,8 @@ object Test {
   case class Options(
     vectors: Path,
     index: Path,
-    sampleSize: Int)
+    sampleSize: Int,
+    epsilon: Float)
 
   object Options {
     val vectors = Opts.option[Path](
@@ -23,9 +24,16 @@ object Test {
     val sampleSize = Opts.option[Int](
       "sample", short="s", metavar="size",
       help="number of queries to sample for recall calculation")
+        .validate("must be greater than 0")(_ > 0)
+        .withDefault(1000)
+    val epsilon = Opts.option[Float](
+      "error", short="e", metavar="relative error",
+      help="amount of relative error allowed when calculating recall")
+        .validate("must be non-negative")(_ >= 0f)
+        .withDefault(0f)
 
     val opts: Opts[Options] =
-      (vectors, index, sampleSize).mapN(Options(_, _, _))
+      (vectors, index, sampleSize, epsilon).mapN(Options(_, _, _, _))
   }
 
   def printResults(recall: Map[Int, SummaryStats]): IO[Unit] =
@@ -42,7 +50,7 @@ object Test {
         _ = println("sampling...")
         tests = Tests.sample(vecs.sorted, options.sampleSize)
         _ = println("calculating recall of index...")
-        recall = tests.recallOf(index)
+        recall = tests.recallOf(index, options.epsilon)
         _ <- printResults(recall)
       } yield ExitCode(0)
     }

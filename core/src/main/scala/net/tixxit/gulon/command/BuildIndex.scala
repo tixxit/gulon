@@ -68,7 +68,7 @@ object BuildIndex {
   }
 
   private def logReadProgress(report: WordVectors.ProgressReport): IO[Unit] =
-    CommandUtils.logProgress(report.percentageRead, f"charsPerWord=${report.charsPerWord}%.1f memUsed=${CommandUtils.formatBytes(report.sizeEstimate)}")
+    CommandUtils.maybeLogProgress(report.percentageRead, f"charsPerWord=${report.charsPerWord}%.1f memUsed=${CommandUtils.formatBytes(report.sizeEstimate)}")
 
   private def logProductQuantizer(report: ProductQuantizer.ProgressReport): IO[Unit] = {
     val p = report.completedIterations.toFloat / report.totalIterations
