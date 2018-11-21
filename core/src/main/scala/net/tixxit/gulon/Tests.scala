@@ -54,7 +54,7 @@ object Tests {
     Tests(wordVectors, queries.map { query => 
       val result = nearestNeighbours(wordVectors, query, ks.max)
       val results = ks.filter(_ <= result.length).map { k =>
-        QueryResult(k, result.getDistance(k))
+        QueryResult(k, result.getDistance(k - 1))
       }
       Query(query, results)
     })
