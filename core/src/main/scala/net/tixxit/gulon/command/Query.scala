@@ -36,30 +36,12 @@ object Query {
       }
     }
 
-  def timeIt[A](f: => A): A = {
-    f
-    f
-    f
-    f
-    f
-    f
-    f
-    f
-    f
-    f
-    f
-    val start = System.currentTimeMillis
-    val ret = f
-    println(System.currentTimeMillis - start)
-    ret
-  }
-
   def run(implicit contextShift: ContextShift[IO]): Opts[IO[ExitCode]] =
     Options.opts.map { options =>
       for {
         vecs <- WordVectors.readWord2VecFile(options.query.toFile)
         index <- Index.read(CommandUtils.openPath(options.index))
-        results = timeIt(index.batchQuery(options.k, vecs.toMatrix))
+        results = index.batchQuery(options.k, vecs.toMatrix)
         _ <- printResults(vecs.keys.zip(results))
       } yield ExitCode(0)
     }

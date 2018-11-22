@@ -67,47 +67,29 @@ object BuildIndex {
       .mapN(Config(_, _, _, _, _, _, _))
   }
 
-  private def logReadProgress(report: WordVectors.ProgressReport): IO[Unit] =
-    CommandUtils.logProgress(report.percentageRead, f"charsPerWord=${report.charsPerWord}%.1f memUsed=${CommandUtils.formatBytes(report.sizeEstimate)}")
-
-  private def logProductQuantizer(report: ProductQuantizer.ProgressReport): IO[Unit] = {
-    val p = report.completedIterations.toFloat / report.totalIterations
-    CommandUtils.logProgress(p, s"iters=${report.completedIterations}/${report.totalIterations} step=${report.stepSize.mean} stdDev=${report.stepSize.stdDev}")
-  }
-
-  private def logPartitioner(report: KMeans.ProgressReport): IO[Unit] = {
-    val p = report.numIterations.toFloat / report.maxIterations
-    CommandUtils.logProgress(p, s"iters=${report.numIterations}/${report.maxIterations}")
-  }
-
   def buildSublinearIndex(vecs: WordVectors,
                           metric: Metric,
                           partitions: Int,
                           strategy: Index.GroupedIndex.Strategy,
                           pqConfig: ProductQuantizer.Config)(implicit
                           contextShift: ContextShift[IO]): IO[Index] = for {
-    _ <- IO.delay(println("\nComputing partitions"))
-    coarseConfig = KMeans.Config(partitions, pqConfig.maxIterations, report = logPartitioner)
-    clustering <- KMeans.computeClusters(Vectors(vecs.toMatrix), coarseConfig)
-    _ <- IO.delay(println("\nRe-indexing word vectors"))
-    grouped <- vecs.grouped(clustering)
-    _ <- IO.delay(println("\nComputing product quantizer"))
-    vectors = grouped.residuals
-    quantizer <- ProductQuantizer(vectors, pqConfig)
-    _ <- IO.delay(println(s"Building index for ${grouped.size} vectors"))
-    index <- Index.grouped(grouped, quantizer, metric, strategy)
+    clustering <- CommandUtils.computePartitions(vecs, partitions, pqConfig.maxIterations)
+    grouped <- CommandUtils.groupWordVectors(vecs, clustering)
+    quantizer <- CommandUtils.quantizeVectors(grouped.residuals, pqConfig)
+    index <- CommandUtils.logTask(s"Building index for ${grouped.size} word vectors",
+                                  Index.grouped(grouped, quantizer, metric, strategy),
+                                  s"Built index for ${grouped.size} word vectors")
   } yield index
 
   def buildLinearIndex(vecs: WordVectors,
                        metric: Metric,
                        pqConfig: ProductQuantizer.Config)(implicit
                        contextShift: ContextShift[IO]): IO[Index] = for {
-    _ <- IO.delay(println("\nRe-indexing word vectors"))
-    sorted = vecs.sorted
-    _ <- IO.delay(println("\nComputing product quantizer"))
-    quantizer <- ProductQuantizer(sorted.toMatrix, pqConfig)
-    _ <- IO.delay(println(s"Building index for ${sorted.size} vectors"))
-    index <- Index.sorted(sorted, quantizer, metric)
+    sorted <- IO.delay(vecs.sorted)
+    quantizer <- CommandUtils.quantizeVectors(sorted.toMatrix, pqConfig)
+    index <- CommandUtils.logTask(s"Building index for ${sorted.size} word vectors",
+                                  Index.sorted(sorted, quantizer, metric),
+                                  s"Built index for ${sorted.size} word vectors")
   } yield index
 
   def buildIndex(vecs: WordVectors,
@@ -129,14 +111,11 @@ object BuildIndex {
     Config.opts.map { config =>
       val pqConfig = ProductQuantizer.Config(numClusters = config.numClusters,
                                              numQuantizers = config.numQuantizers,
-                                             maxIterations = config.maxIterations,
-                                             report = logProductQuantizer)
+                                             maxIterations = config.maxIterations)
       for {
-        _ <- IO.delay(println("Reading word vectors"))
-        vecs <- WordVectors.readWord2VecFile(config.input.toFile, config.metric.normalized, logReadProgress)
+        vecs <- CommandUtils.readWord2VecWithLogging(config.input, config.metric.normalized)
         index <- buildIndex(vecs, config.metric, config.partitioned, pqConfig)
-        _ <- IO.delay(println(s"Writing index to ${config.output}"))
-        _ <- CommandUtils.writePath(config.output)(o => IO.delay(Index.toProtobuf(index).writeTo(o)))
+        _ <- CommandUtils.writeIndex(index, config.output)
       } yield ExitCode(0)
     }
   }

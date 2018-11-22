@@ -209,7 +209,7 @@ object Index {
   def exactNearestNeighbours(vectors: Array[Array[Float]],
                              from: Int, until: Int,
                              query: Array[Float],
-                             k: Int): Array[Int] = {
+                             k: Int): TopKHeap = {
     require(from <= until, s"invalid range: expected from=$from <= until=$until")
     require(until <= vectors.length, s"invalid range: expected until=$until <= vectors.length=${vectors.length}")
 
@@ -220,18 +220,12 @@ object Index {
       heap.update(i, MathUtils.distanceSq(vectors(i), query))
       i += 1
     }
-    val result = new Array[Int](heap.size)
-    var j = result.length - 1
-    while (j >= 0) {
-      result(j) = heap.delete()
-      j -= 1
-    }
-    result
+    heap
   }
 
   def exactNearestNeighbours(vectors: Array[Array[Float]],
                              query: Array[Float],
-                             k: Int): Array[Int] =
+                             k: Int): TopKHeap =
     exactNearestNeighbours(vectors, 0, vectors.length, query, k)
 
   case class GroupedIndex(keyIndex: KeyIndex.Grouped,
@@ -291,9 +285,9 @@ object Index {
     private def searchSpace(query: Array[Float]): Array[Int] =
       strategy match {
         case Strategy.LimitGroups(m) =>
-          exactNearestNeighbours(centroids, query, m)
+          exactNearestNeighbours(centroids, query, m).deleteAll()
         case Strategy.LimitVectors(n) =>
-          val order = exactNearestNeighbours(centroids, query, centroids.length)
+          val order = exactNearestNeighbours(centroids, query, centroids.length).deleteAll()
           var i = 0
           var count = 0
           while (i < order.length && count < n) {
