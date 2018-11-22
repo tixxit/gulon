@@ -1,5 +1,7 @@
 package net.tixxit.gulon
 
+import cats.kernel.Monoid
+
 case class SummaryStats(count: Int, mean: Float, s: Float) {
   def variance: Float = s / count
   def stdDev: Float = math.sqrt(variance).toFloat
@@ -31,6 +33,12 @@ object SummaryStats {
   }
 
   def zero: SummaryStats = SummaryStats(0, 0f, 0f)
+
+  implicit val summaryStatsMonoid: Monoid[SummaryStats] =
+    new Monoid[SummaryStats] {
+      def empty: SummaryStats = zero
+      def combine(lhs: SummaryStats, rhs: SummaryStats): SummaryStats = lhs ++ rhs
+    }
 
   final class SummaryStatsBuilder() {
     private[this] var m = 0f

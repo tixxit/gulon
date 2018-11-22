@@ -4,7 +4,7 @@ package command
 import java.nio.file.Path
 
 import cats.implicits._
-import cats.effect.{ContextShift, ExitCode, IO}
+import cats.effect.{Clock, ContextShift, ExitCode, IO}
 import com.monovore.decline._
 
 object Test {
@@ -42,19 +42,17 @@ object Test {
         IO.delay(println(s"R@$k: ${stats.mean} +/- ${stats.stdDev}"))
       }
 
-  def run(implicit contextShift: ContextShift[IO]): Opts[IO[ExitCode]] =
+  def run(implicit contextShift: ContextShift[IO], clock: Clock[IO]): Opts[IO[ExitCode]] =
     Options.opts.map { options =>
       for {
-        vecs <- WordVectors.readWord2VecFile(options.vectors.toFile)
+        vecs <- CommandUtils.readWord2VecWithLogging(options.vectors, false)
         index <- Index.read(CommandUtils.openPath(options.index))
-        _ = println("sampling...")
-        tests = Tests.sample(vecs.sorted, options.sampleSize)
-        _ = println("calculating recall of index...")
-        recall = tests.recallOf(index, options.epsilon)
+        tests <- CommandUtils.sampleTests(vecs.sorted, options.sampleSize)
+        recall <- CommandUtils.calculateRecall(tests, index, options.epsilon)
         _ <- printResults(recall)
       } yield ExitCode(0)
     }
 
-  def command(implicit contextShift: ContextShift[IO]): Command[IO[ExitCode]] =
+  def command(implicit contextShift: ContextShift[IO], clock: Clock[IO]): Command[IO[ExitCode]] =
     Command("test", "calculate recall of index", true)(run)
 }
