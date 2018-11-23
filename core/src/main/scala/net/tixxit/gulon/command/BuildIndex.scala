@@ -6,7 +6,7 @@ import java.lang.Integer
 import java.nio.file.Path
 
 import cats.data.Validated
-import cats.effect.{ContextShift, ExitCode, IO}
+import cats.effect.{Clock, ContextShift, ExitCode, IO}
 import cats.implicits._
 import com.google.protobuf.ByteString
 import com.monovore.decline._
@@ -72,7 +72,7 @@ object BuildIndex {
                           partitions: Int,
                           strategy: Index.GroupedIndex.Strategy,
                           pqConfig: ProductQuantizer.Config)(implicit
-                          contextShift: ContextShift[IO]): IO[Index] = for {
+                          contextShift: ContextShift[IO], clock: Clock[IO]): IO[Index] = for {
     clustering <- CommandUtils.computePartitions(vecs, partitions, pqConfig.maxIterations)
     grouped <- CommandUtils.groupWordVectors(vecs, clustering)
     quantizer <- CommandUtils.quantizeVectors(grouped.residuals, pqConfig)
@@ -84,7 +84,7 @@ object BuildIndex {
   def buildLinearIndex(vecs: WordVectors,
                        metric: Metric,
                        pqConfig: ProductQuantizer.Config)(implicit
-                       contextShift: ContextShift[IO]): IO[Index] = for {
+                       contextShift: ContextShift[IO], clock: Clock[IO]): IO[Index] = for {
     sorted <- IO.delay(vecs.sorted)
     quantizer <- CommandUtils.quantizeVectors(sorted.toMatrix, pqConfig)
     index <- CommandUtils.logTask(s"Building index for ${sorted.size} word vectors",
@@ -96,18 +96,18 @@ object BuildIndex {
                  metric: Metric,
                  partitioned: Option[Config.Partitioned],
                  pqConfig: ProductQuantizer.Config)(implicit
-                 contextShift: ContextShift[IO]): IO[Index] =
+                 contextShift: ContextShift[IO], clock: Clock[IO]): IO[Index] =
     partitioned match {
       case None =>
-        buildLinearIndex(vecs, metric, pqConfig)(contextShift)
+        buildLinearIndex(vecs, metric, pqConfig)(contextShift, clock)
       case Some(Config.Partitioned(maybePartitions, maybeLimit)) =>
         val partitions = maybePartitions.getOrElse(vecs.size / 1000)
         val limit = maybeLimit.getOrElse(math.max((partitions * 0.05).toInt, 5))
         val strategy = Index.GroupedIndex.Strategy.LimitGroups(limit)
-        buildSublinearIndex(vecs, metric, partitions, strategy, pqConfig)(contextShift)
+        buildSublinearIndex(vecs, metric, partitions, strategy, pqConfig)(contextShift, clock)
     }
 
-  def run(implicit contextShift: ContextShift[IO]): Opts[IO[ExitCode]] = {
+  def run(implicit contextShift: ContextShift[IO], clock: Clock[IO]): Opts[IO[ExitCode]] = {
     Config.opts.map { config =>
       val pqConfig = ProductQuantizer.Config(numClusters = config.numClusters,
                                              numQuantizers = config.numQuantizers,
@@ -120,6 +120,6 @@ object BuildIndex {
     }
   }
 
-  def command(implicit contextShift: ContextShift[IO]): Command[IO[ExitCode]] =
+  def command(implicit contextShift: ContextShift[IO], clock: Clock[IO]): Command[IO[ExitCode]] =
     Command("build-index", "build a nearest neighbour index", true)(run)
 }

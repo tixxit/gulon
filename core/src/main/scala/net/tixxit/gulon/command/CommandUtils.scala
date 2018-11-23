@@ -9,6 +9,7 @@ import java.nio.file.Path
 import cats.effect.{Clock, ContextShift, IO}
 import cats.Eval
 import cats.implicits._
+import scala.concurrent.duration.MILLISECONDS
 
 object CommandUtils {
   final def formatBytes(bytes: Long): String = {
@@ -80,22 +81,40 @@ object CommandUtils {
   final def printError(message: String): IO[Unit] =
     IO.delay(println(s"\u001b[31mERROR:\u001b[0m $message"))
 
-  final def logTask[A](startMessage: String, task: IO[A], successMessage: String): IO[A] =
+  final def formatDuration(ms: Long): String =
+    if (ms < 1000L) {
+      s"${ms}ms"
+    } else if (ms < 60 * 1000L) {
+      f"${ms / 1000d}%.1fs"
+    } else if (ms < 60 * 60 * 1000L) {
+      val min = ms / (60 * 1000)
+      val sec = ms % (60 * 1000L)
+      s"${min}m ${formatDuration(sec)}"
+    } else {
+      val hours = ms / (60 * 60 * 1000L)
+      val min = ms % (60 * 60 * 1000L)
+      s"${hours}h ${formatDuration(min)}"
+    }
+
+  final def logTask[A](startMessage: String, task: IO[A], successMessage: String)(implicit clock: Clock[IO]): IO[A] =
     logTask[A](startMessage, task, (_: A) => successMessage)
 
-  final def logTask[A](startMessage: String, task: IO[A], successMessage: A => String): IO[A] = for {
+  final def logTask[A](startMessage: String, task: IO[A], successMessage: A => String)(implicit clock: Clock[IO]): IO[A] = for {
     _ <- printRunning(startMessage)
+    start <- clock.monotonic(MILLISECONDS)
     a <- task
+    end <- clock.monotonic(MILLISECONDS)
+    ms = end - start
     _ <- clearLine(2)
-    _ <- printSuccess(successMessage(a))
+    _ <- printSuccess(s"${successMessage(a)} in ${formatDuration(ms)}")
   } yield a
 
-  final def readWord2VecWithLogging(path: Path, normalized: Boolean): IO[WordVectors.Unindexed] =
+  final def readWord2VecWithLogging(path: Path, normalized: Boolean)(implicit clock: Clock[IO]): IO[WordVectors.Unindexed] =
     logTask("Reading word vectors",
             WordVectors.readWord2VecFile(path.toFile, normalized, logReadProgress),
             (vecs: WordVectors.Unindexed) => s"Read ${vecs.size} word vectors")
 
-  final def writeIndex(index: Index, path: Path): IO[Unit] =
+  final def writeIndex(index: Index, path: Path)(implicit clock: Clock[IO]): IO[Unit] =
     logTask(s"Writing index to ${path}",
             CommandUtils.writePath(path)(o => IO.delay(Index.toProtobuf(index).writeTo(o))),
             s"Wrote index to ${path}")
@@ -105,14 +124,16 @@ object CommandUtils {
     CommandUtils.logProgress(p, s"iters=${report.numIterations}/${report.maxIterations}")
   }
 
-  final def computePartitions(vecs: WordVectors, partitions: Int, maxIterations: Int)(implicit contextShift: ContextShift[IO]): IO[KMeans] = {
+  final def computePartitions(vecs: WordVectors, partitions: Int, maxIterations: Int)(implicit
+                              contextShift: ContextShift[IO], clock: Clock[IO]): IO[KMeans] = {
     val coarseConfig = KMeans.Config(partitions, maxIterations, report = logPartitioner)
     logTask("Computing partitions",
             KMeans.computeClusters(Vectors(vecs.toMatrix), coarseConfig),
             s"Computed ${partitions} partitions")
   }
 
-  final def groupWordVectors(vecs: WordVectors, clustering: KMeans)(implicit contextShift: ContextShift[IO]): IO[WordVectors.Grouped] =
+  final def groupWordVectors(vecs: WordVectors, clustering: KMeans)(implicit
+                             contextShift: ContextShift[IO], clock: Clock[IO]): IO[WordVectors.Grouped] =
     logTask("Reindexing word vectors", vecs.grouped(clustering), "Re-indexed word vectors")
 
   private def logProductQuantizer(report: ProductQuantizer.ProgressReport): IO[Unit] = {
@@ -120,7 +141,8 @@ object CommandUtils {
     CommandUtils.logProgress(p, s"iters=${report.completedIterations}/${report.totalIterations} step=${report.stepSize.mean} stdDev=${report.stepSize.stdDev}")
   }
 
-  final def quantizeVectors(vectors: Matrix, pqConfig: ProductQuantizer.Config)(implicit contextShift: ContextShift[IO]): IO[ProductQuantizer] =
+  final def quantizeVectors(vectors: Matrix, pqConfig: ProductQuantizer.Config)(implicit
+                            contextShift: ContextShift[IO], clock: Clock[IO]): IO[ProductQuantizer] =
     logTask("Quantizing word vectors",
             ProductQuantizer(vectors, pqConfig.copy(report = logProductQuantizer)),
             s"Quantized ${vectors.rows} word vectors")
