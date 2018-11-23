@@ -5,7 +5,7 @@ import java.util.Arrays
 /**
  * A wrapper around a set of centroids.
  */
-final class Clustering(val centroids: Array[Array[Float]]) {
+final class Clustering private (val centroids: Array[Array[Float]]) {
   def size: Int = centroids.length
 
   override def hashCode: Int =

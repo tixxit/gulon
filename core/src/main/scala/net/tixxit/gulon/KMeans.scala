@@ -10,10 +10,19 @@ import cats.implicits._
 
 final class KMeans private (
   val dimension: Int,
-  offsets: Array[Float],
   val centroids: Array[Array[Float]]
 ) {
+  private[this] val offsets: Array[Float] = KMeans.calculateOffsets(centroids)
+
   final def k: Int = centroids.length
+
+  // Need to know:
+  //   Distance to current centroid
+  //   Minimum distance to all other centroids
+  //   After each reclustering:
+  //     - get deltas of centroid movement
+  //     - decrease min distance by how delta of closest centroid + max of all other deltas
+  //     - only check all centroids if membership definitely changed
 
   def assign(vecs: Vectors): Array[Int] = {
     val assignments = new Array[Int](vecs.size)
@@ -167,7 +176,7 @@ object KMeans {
     stats.result()
   }
 
-  final def apply(dimension: Int, centroids: Array[Array[Float]]): KMeans = {
+  final def calculateOffsets(centroids: Array[Array[Float]]): Array[Float] = {
     val offsets = new Array[Float](centroids.length)
     var i = 0
     while (i < centroids.length) {
@@ -182,18 +191,23 @@ object KMeans {
       offsets(i) = s
       i += 1
     }
-    new KMeans(dimension, offsets, centroids)
+    offsets
   }
 
-  def init(k: Int, vecs: Vectors, seed: Int = 0): KMeans = {
+  final def apply(dimension: Int, centroids: Array[Array[Float]]): KMeans =
+    new KMeans(dimension, centroids)
+
+  private def initializeCentroids(vectors: Vectors, k: Int, seed: Int = 0): Array[Array[Float]] = {
     val rng = new Random(seed)
-    val centroids = Array.fill(k) {
-      val i = rng.nextInt(vecs.data.length)
-      val row = vecs.data(i)
-      java.util.Arrays.copyOfRange(row, vecs.from, vecs.until)
+    Array.fill(k) {
+      val i = rng.nextInt(vectors.data.length)
+      val row = vectors.data(i)
+      java.util.Arrays.copyOfRange(row, vectors.from, vectors.until)
     }
-    KMeans(vecs.dimension, centroids)
   }
+
+  def init(k: Int, vecs: Vectors, seed: Int = 0): KMeans =
+    KMeans(vecs.dimension, initializeCentroids(vecs, k, seed))
 
   final def fromAssignment(k: Int, dimension: Int, vecs: Vectors, assignments: Array[Int]): KMeans = {
     val centroids: Array[Array[Float]] = new Array[Array[Float]](k)
@@ -223,5 +237,164 @@ object KMeans {
       i += 1
     }
     KMeans(dimension, centroids)
+  }
+
+  final def calculateCentroids(vectors: Vectors,
+                               assignments: Array[Int],
+                               k: Int): Array[Array[Float]] = {
+    val dimension = vectors.dimension
+    val centroids: Array[Array[Float]] = Array.fill(k)(new Array[Float](dimension))
+    val counts: Array[Int] = new Array[Int](k)
+
+    // Calculate the means incrementally.
+    val data = vectors.data
+    val from = vectors.from
+    val until = vectors.until
+    var i = 0
+    while (i < data.length) {
+      val v = data(i)
+      val k = assignments(i)
+      val c = centroids(k)
+      val n = counts(k) + 1
+      var j = 0
+      while (j < c.length) {
+        val p = c(j)
+        c(j) = p + ((v(j + from) - p) / n)
+        j += 1
+      }
+      counts(k) = n
+      i += 1
+    }
+    centroids
+  }
+
+  private def assignChunk(vectors: Vectors,
+                          start: Int, end: Int,
+                          centroids: Array[Array[Float]],
+                          assignments: Array[Int],
+                          intraClusterDistance: Array[Float],
+                          extraClusterDistance: Array[Float],
+                          updatedDistance: Array[Boolean],
+                          offsets: Array[Float]): Boolean = {
+    val rng = new Random(start)
+    val from = vectors.from
+    val until = vectors.until
+    val data = vectors.data
+    var i = start
+    var changed = false
+    while (i < end) {
+      val row = data(i)
+      if (intraClusterDistance(i) >= extraClusterDistance(i)) {
+        var k = 0
+        var extraMin = Float.MaxValue
+        var intraMin = Float.MaxValue
+        var cluster = -1
+        while (k < centroids.length) {
+          val c = centroids(k)
+          var j = 0
+          var d = 0f
+          val len = c.length
+          while (j < len) {
+            d += row(j + from) * c(j)
+            j += 1
+          }
+          d = offsets(k) - 2 * d
+          if (d < intraMin || (d == intraMin && rng.nextBoolean())) {
+            extraMin = intraMin
+            intraMin = d
+            cluster = k
+          } else if (d < extraMin) {
+            extraMin = d
+          }
+          k += 1
+        }
+        changed = changed || assignments(i) != cluster
+        assignments(i) = cluster
+        intraClusterDistance(i) = intraMin
+        extraClusterDistance(i) = extraMin
+        updatedDistance(i) = true
+      }
+      i += 1
+    }
+    changed
+  }
+
+  private[this] val BatchSize = 25000
+
+  private def calculateDeltas(xs: Array[Array[Float]], ys: Array[Array[Float]]): Array[Float] = {
+    require(xs.length == ys.length)
+    val deltas = new Array[Float](xs.length)
+    var i = 0
+    while (i < xs.length) {
+      deltas(i) = MathUtils.distance(xs(i), ys(i))
+      i += 1
+    }
+    deltas
+  }
+
+  def computeClusters2(vectors: Vectors, config: Config)(implicit contextShift: ContextShift[IO]): IO[(Clustering, Assignment)] = {
+    val assignments = new Array[Int](vectors.size)
+    val intraClusterDistance = ArrayUtils.fill(vectors.size, Float.PositiveInfinity)
+    val extraClusterDistance = ArrayUtils.fill(vectors.size, Float.NegativeInfinity)
+    config.report(ProgressReport(0, config.maxIterations, SummaryStats.zero, false))
+      .flatMap { _ =>
+        Monad[IO].tailRecM((initializeCentroids(vectors, config.numClusters, config.seed), 0)) {
+          case (centroids, config.maxIterations) =>
+              IO.pure(Right((Clustering(centroids), Assignment(assignments))))
+          case (centroids, iters) =>
+            assign(vectors, centroids, assignments, intraClusterDistance, extraClusterDistance)
+              .flatMap {
+                case Some((Clustering(nextCentroids), stepSize)) =>
+                  config.report(ProgressReport(iters + 1, config.maxIterations, stepSize, false))
+                    .as(Left((nextCentroids, iters + 1)))
+                case None =>
+                  config.report(ProgressReport(iters + 1, config.maxIterations, SummaryStats.zero, true))
+                    .as(Right((Clustering(centroids), Assignment(assignments))))
+              }
+        }
+      }
+  }
+
+  def assign(vectors: Vectors,
+             centroids: Array[Array[Float]],
+             assignments: Array[Int],
+             intraClusterDistance: Array[Float],
+             extraClusterDistance: Array[Float])(implicit
+             contextShift: ContextShift[IO]): IO[Option[(Clustering, SummaryStats)]] = {
+    val offsets = calculateOffsets(centroids)
+    val updatedDistance = new Array[Boolean](vectors.size)
+
+    List.range(0, assignments.length, BatchSize)
+      .parTraverse { start =>
+        val end = math.min(assignments.length, start + BatchSize)
+        IO.shift.map { _ =>
+          assignChunk(vectors, start, end,
+                      centroids, assignments,
+                      intraClusterDistance, extraClusterDistance,
+                      updatedDistance, offsets)
+        }
+      }
+      .map { changes =>
+        val stable = changes.foldLeft(false)(_ || _)
+        if (stable) {
+          None
+        } else {
+          val centroids0 = calculateCentroids(vectors, assignments, centroids.length)
+          val deltas = calculateDeltas(centroids, centroids0)
+          // TODO: We could calculate max deltas without each cluster in O(k) time.
+          val maxDelta = ArrayUtils.max(deltas)
+          var i = 0
+          val len = updatedDistance.length
+          while (i < len) {
+            if (updatedDistance(i)) {
+              val c = assignments(i)
+              intraClusterDistance(i) = math.pow(math.sqrt(intraClusterDistance(i)) + deltas(c), 2).toFloat
+              extraClusterDistance(i) = math.pow(math.sqrt(intraClusterDistance(i)) - maxDelta, 2).toFloat
+            }
+            i += 1
+          }
+          Some((Clustering(centroids0), SummaryStats.fromArray(deltas)))
+        }
+      }
   }
 }

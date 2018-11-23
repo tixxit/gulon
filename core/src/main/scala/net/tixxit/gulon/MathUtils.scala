@@ -56,6 +56,16 @@ object SummaryStats {
       SummaryStats(n, m, s)
   }
 
+  def fromArray(xs: Array[Float]): SummaryStats = {
+    var stats = SummaryStats.newBuilder()
+    var i = 0
+    while (i < xs.length) {
+      stats.update(xs(i))
+      i += 1
+    }
+    stats.result()
+  }
+
   def newBuilder(): SummaryStatsBuilder = new SummaryStatsBuilder()
 }
 
