@@ -18,4 +18,6 @@ final class Assignment private (val assignments: Array[Int]) {
 object Assignment {
   def apply(assignments: Array[Int]): Assignment =
     new Assignment(assignments)
+
+  def unapply(a: Assignment): Some[Array[Int]] = Some(a.assignments)
 }

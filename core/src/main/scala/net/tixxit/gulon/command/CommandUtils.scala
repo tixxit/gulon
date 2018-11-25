@@ -121,7 +121,15 @@ object CommandUtils {
 
   private def logPartitioner(report: KMeans.ProgressReport): IO[Unit] = {
     val p = report.numIterations.toFloat / report.maxIterations
-    CommandUtils.logProgress(p, s"iters=${report.numIterations}/${report.maxIterations}")
+    CommandUtils.logProgress(p, s"iters=${report.numIterations}/${report.maxIterations} stepSize=${report.stepSize.mean} stdDev=${report.stepSize.stdDev}")
+  }
+
+  final def computeClustering(vecs: WordVectors, numClusters: Int, maxIterations: Int)(implicit
+                              contextShift: ContextShift[IO], clock: Clock[IO]): IO[(Clustering, Assignment)] = {
+    val config = KMeans.Config(numClusters, maxIterations, report = logPartitioner)
+    logTask("Computing clustering",
+            KMeans.computeClusters2(Vectors(vecs.toMatrix), config),
+            s"Computed ${numClusters} clusters")
   }
 
   final def computePartitions(vecs: WordVectors, partitions: Int, maxIterations: Int)(implicit

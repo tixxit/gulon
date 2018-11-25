@@ -9,6 +9,7 @@ object Main extends IOApp {
       .orElse(Opts.subcommand(Query.command))
       .orElse(Opts.subcommand(QueryWords.command))
       .orElse(Opts.subcommand(Test.command))
+      .orElse(Opts.subcommand(Cluster.command))
 
   val app: Command[IO[ExitCode]] =
     Command("gulon",
