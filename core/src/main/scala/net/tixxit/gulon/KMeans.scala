@@ -16,14 +16,6 @@ final class KMeans private (
 
   final def k: Int = centroids.length
 
-  // Need to know:
-  //   Distance to current centroid
-  //   Minimum distance to all other centroids
-  //   After each reclustering:
-  //     - get deltas of centroid movement
-  //     - decrease min distance by how delta of closest centroid + max of all other deltas
-  //     - only check all centroids if membership definitely changed
-
   def assign(vecs: Vectors): Array[Int] = {
     val assignments = new Array[Int](vecs.size)
     assign(vecs, assignments)
@@ -235,7 +227,7 @@ object KMeans {
       centroids(c) = centroid
       val offset = distSq(centroid, 0, centroid.length)
       var i = 0
-      var maxWeight = -1f
+      var totalWeight = 0f
       var maxVector = -1
       while (i < data.length) {
         val row = data(i)
@@ -246,9 +238,9 @@ object KMeans {
           distances(i) = d
           assignments(i) = c
         }
-        val w = math.pow(rng.nextDouble(), 1d / d).toFloat
-        if (w > maxWeight) {
-          maxWeight = w
+        val threshold = totalWeight
+        totalWeight += d
+        if ((rng.nextDouble() * totalWeight) > threshold) {
           maxVector = i
         }
         i += 1
@@ -356,6 +348,9 @@ object KMeans {
     }
   }
 
+  //case class ExtraClusterDistances(lowerBounds: Array[Array[Float]],
+  //                                 groups: Array[Array[Int]])
+
   private def assignChunk(vectors: Vectors,
                           vectorOffsets: Array[Float],
                           start: Int, end: Int,
@@ -459,7 +454,6 @@ object KMeans {
     }
     sum
   }
-
 
   private[this] val BatchSize = 25000
 
