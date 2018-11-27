@@ -206,7 +206,14 @@ object KMeans {
     d
   }
 
-  // KMeans++
+  // Choose an initial set of centroids for the k-means algorithm.  This is a
+  // pretty basic implementation of KMeans++. It chooses the initial point at
+  // random. Each successive iteration chooses the next centroid by selecting
+  // from the points randomly, but weighted by the squared distance to their
+  // nearest centroid. Thus, the initial points chosen are generally spaced out
+  // fairly well.
+  //
+  // TODO: Parallelize this.
   private def initializeCentroids2(vectors: Vectors,
                                    vectorOffsets: Array[Float],
                                    k: Int,
@@ -348,9 +355,25 @@ object KMeans {
     }
   }
 
-  //case class ExtraClusterDistances(lowerBounds: Array[Array[Float]],
-  //                                 groups: Array[Array[Int]])
-
+  // This is the core K-Means logic. We work in chunks so that we can
+  // parallelize single runs across multiple CPU cores. This is incredibly
+  // stateful. This code modifies many of the input parameters provided,
+  // notably `assignments`, `intraClusterDistances` and
+  // `extraClusterDistances`. I've tried to keep it well commented, since the
+  // vast majority of it is pretty obtuse/completely unobvious.
+  //
+  // Overall, the overarching goal of an efficient k-means algorithm is to
+  // reduce the number of distance calculations, since we would otherwise be
+  // performing n * k (!!) of them. This is balanced by the fact that almost
+  // all worthwhile heuristics to skip distance calculations require more
+  // storage. For small values of k and/or n, its mostly fine. However, Gulon
+  // is often used with large values for both, so we can't just arbitrary store
+  // all sorts of values in memory. In general, we assume that k << n and O(n)
+  // extra storage, where the constant is fairly small`, is OK. To this end,
+  // you'll see we often "group" centroids together into a constant number of
+  // groups so that we can avoid adding a factor of `k` to our storage. It's a
+  // bit messy, but the alternative is running out of heap for most practical
+  // word embeddings.
   private def assignChunk(vectors: Vectors,
                           vectorOffsets: Array[Float],
                           start: Int, end: Int,
@@ -382,7 +405,7 @@ object KMeans {
         val vOffset = vectorOffsets(i)
         var cluster = assignments(i)
         // Exact squared distance to previously assigned centroid.
-        var intraMin = offsets(cluster) - 2 * dot(centroids(cluster), row, from) + vOffset
+        intraMin = offsets(cluster) - 2 * dot(centroids(cluster), row, from) + vOffset
         // After calculating intraMin exactly, without the approximation used
         // in `assign`, we get a second chance to skip iterating over the
         // centroids.
@@ -413,6 +436,13 @@ object KMeans {
             }
             k += 1
           }
+          // We need to get a somewhat tight lower bound on extraMin, the
+          // distance from point i to the the _next_ nearest cluster than the
+          // one it is assigned. We do this by taking the minimum lower bound
+          // to all other clusters. In some cases, we have the exact distance
+          // calculated above, but in other cases, where we were able to skip
+          // the distance calculation, we can still get an OK lower bound using
+          // centroidDistances (see below).
           intraMin = math.sqrt(intraMin).toFloat
           extraMin = Float.PositiveInfinity
           k = 0
@@ -455,8 +485,7 @@ object KMeans {
     sum
   }
 
-  private[this] val BatchSize = 25000
-
+  // Returns the euclidean distance between each element of `xs` and `ys`.
   private def calculateDeltas(xs: Array[Array[Float]], ys: Array[Array[Float]]): Array[Float] = {
     require(xs.length == ys.length)
     val deltas = new Array[Float](xs.length)
@@ -468,6 +497,82 @@ object KMeans {
     deltas
   }
 
+  // This is a single step/iteration of the K-Means algorithm. This will chunk
+  // up the input then assign all points in `vectors` to the nearest centroid
+  // in parallel. The bulk of the work is done in `assignChunk`, so look there
+  // if you want some insight into the specifics of the algorithm.
+  def assign(vectors: Vectors,
+             vectorOffsets: Array[Float],
+             centroids: Array[Array[Float]],
+             assignments: Array[Int],
+             intraClusterDistance: Array[Float],
+             extraClusterDistance: Array[Float])(implicit
+             contextShift: ContextShift[IO]): IO[Option[(Clustering, SummaryStats)]] = {
+    val offsets = calculateOffsets(centroids)
+    // Calculates lower-bounds on all pair-wise distances between the
+    // centroids. This is actually a fairly heavy weight operation - we should
+    // consider parallelizing it.
+    val centroidDistances = CentroidDistances.fromCentroids(centroids)
+
+    List.range(0, assignments.length, BatchSize)
+      .parTraverse { start =>
+        val end = math.min(assignments.length, start + BatchSize)
+        IO.shift.map { _ =>
+          assignChunk(vectors, vectorOffsets, start, end,
+                      centroids, centroidDistances, assignments,
+                      intraClusterDistance, extraClusterDistance,
+                      offsets)
+        }
+      }
+      .map { changes =>
+        val stable = !changes.foldLeft(false)(_ || _)
+        if (stable) {
+          None
+        } else {
+          // Compute the centroids of the clusters as the mean of all points
+          // assigned to the cluster.
+          val centroids0 = calculateCentroids(vectors, assignments, centroids.length)
+          // Calculates how much each centroid moved during this iteration. These
+          // are used to update our lower/upper distance bounds. See below.
+          val deltas = calculateDeltas(centroids, centroids0)
+          val maxDelta = ArrayUtils.max(deltas)
+          var i = 0
+          val len = assignments.length
+          while (i < len) {
+            val c = assignments(i)
+            // Each centroid can move, at most, deltas(c) away from any point
+            // assigned to it. This gives us a good upper bound on the distance.
+            intraClusterDistance(i) = intraClusterDistance(i) + deltas(c)
+            // This lower bound has to drop by maxDelta - the worst case
+            // scenario being that the 2nd closest centroid was the one that
+            // moved the most. We don't keep enough information around to know
+            // get any tighter bounds.
+            extraClusterDistance(i) = extraClusterDistance(i) - maxDelta
+            i += 1
+          }
+          Some((Clustering(centroids0), SummaryStats.fromArray(deltas)))
+        }
+      }
+  }
+
+  private[this] val BatchSize = 25000
+
+  /**
+   * Computes a clustering of `vectors`. This will return after either
+   * `config.maxIterations` iterations have completed or if the clustering has
+   * converged.
+   *
+   * To reduce runtime, this uses some extra space. Beyond storing the
+   * centroids and assignments, this requires the following extra space:
+   *
+   * - 4 * k * math.min(k, 100) bytes for cachcing centroid-to-centroid distances
+   * - 4 * n * math.min(k, 10) bytes for storing lower-bounds on point-to-centroid distances
+   * - 4 * n bytes for storing upper bounds on point-to-assigned-centroid distances
+   * - 4 * n bytes for storing pre-computed vector magnitudes to speed up distance computations
+   *
+   * Importantly, this stores only O(n) extra space, which does not scale
+   * linearly with the number of clusters.
+   */
   def computeClusters2(vectors: Vectors, config: Config)(implicit contextShift: ContextShift[IO]): IO[(Clustering, Assignment)] = {
     config.report(ProgressReport(0, config.maxIterations, SummaryStats.zero, false))
       .flatMap { _ =>
@@ -490,48 +595,6 @@ object KMeans {
                   config.report(ProgressReport(iters + 1, iters + 1, SummaryStats.zero, true))
                     .as(Right((Clustering(centroids), Assignment(assignments))))
               }
-        }
-      }
-  }
-
-  def assign(vectors: Vectors,
-             vectorOffsets: Array[Float],
-             centroids: Array[Array[Float]],
-             assignments: Array[Int],
-             intraClusterDistance: Array[Float],
-             extraClusterDistance: Array[Float])(implicit
-             contextShift: ContextShift[IO]): IO[Option[(Clustering, SummaryStats)]] = {
-    val offsets = calculateOffsets(centroids)
-    val centroidDistances = CentroidDistances.fromCentroids(centroids)
-
-    List.range(0, assignments.length, BatchSize)
-      .parTraverse { start =>
-        val end = math.min(assignments.length, start + BatchSize)
-        IO.shift.map { _ =>
-          assignChunk(vectors, vectorOffsets, start, end,
-                      centroids, centroidDistances, assignments,
-                      intraClusterDistance, extraClusterDistance,
-                      offsets)
-        }
-      }
-      .map { changes =>
-        val stable = !changes.foldLeft(false)(_ || _)
-        if (stable) {
-          None
-        } else {
-          val centroids0 = calculateCentroids(vectors, assignments, centroids.length)
-          val deltas = calculateDeltas(centroids, centroids0)
-          // TODO: We could calculate max deltas without each cluster in O(k) time.
-          val maxDelta = ArrayUtils.max(deltas)
-          var i = 0
-          val len = assignments.length
-          while (i < len) {
-            val c = assignments(i)
-            intraClusterDistance(i) = intraClusterDistance(i) + deltas(c)
-            extraClusterDistance(i) = extraClusterDistance(i) - maxDelta
-            i += 1
-          }
-          Some((Clustering(centroids0), SummaryStats.fromArray(deltas)))
         }
       }
   }
