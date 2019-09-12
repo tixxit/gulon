@@ -6,10 +6,12 @@ crossScalaVersions in ThisBuild := Seq("2.11.12", "2.12.7")
 
 scalacOptions in ThisBuild ++= Seq("-deprecation", "-feature", "-unchecked", "-language:higherKinds")
 
-val catsEffectVersion = "1.0.0"
+val catsEffectVersion = "1.4.0"
 val declineVersion = "0.5.0"
 val scalaTestVersion = "3.0.5"
 val scalaCheckVersion = "1.14.0"
+val fastparseVersion = "2.1.3"
+val jline3Version = "3.9.0"
 
 val commonSettings = Seq(
   libraryDependencies ++= Seq(
@@ -27,7 +29,9 @@ lazy val core = project
     commonSettings,
     libraryDependencies ++= Seq(
       "org.typelevel" %% "cats-effect" % catsEffectVersion,
-      "com.monovore" %% "decline" % declineVersion
+      "com.monovore" %% "decline" % declineVersion,
+      "com.lihaoyi" %% "fastparse" % fastparseVersion,
+      "org.jline" % "jline" % jline3Version
     ),
     PB.targets in Compile := Seq(
       scalapb.gen() -> (sourceManaged in Compile).value

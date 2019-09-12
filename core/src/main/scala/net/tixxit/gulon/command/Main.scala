@@ -8,6 +8,7 @@ object Main extends IOApp {
     Opts.subcommand(BuildIndex.command)
       .orElse(Opts.subcommand(Query.command))
       .orElse(Opts.subcommand(QueryWords.command))
+      .orElse(Opts.subcommand(Repl.command))
       .orElse(Opts.subcommand(Test.command))
 
   val app: Command[IO[ExitCode]] =
